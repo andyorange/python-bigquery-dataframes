@@ -79,6 +79,7 @@ from bigframes.functions.remote_function import read_gbq_function as bigframes_r
 from bigframes.functions.remote_function import remote_function as bigframes_rf
 import bigframes.session._io.bigquery as bigframes_io
 import bigframes.session.clients
+import bigframes.session.validation
 import bigframes.version
 
 # Even though the ibis.backends.bigquery import is unused, it's needed
@@ -967,8 +968,15 @@ class Session(
             Literal["c", "python", "pyarrow", "python-fwf", "bigquery"]
         ] = None,
         encoding: Optional[str] = None,
+        write_engine: Optional[
+            Literal["default", "bigquery_inline", "bigquery_load", "bigquery_streaming"]
+        ] = "default",
         **kwargs,
     ) -> dataframe.DataFrame:
+        bigframes.session.validation.validate_engine_compatibility(
+            engine=engine,
+            write_engine=write_engine,
+        )
         table = bigframes_io.random_table(self._anonymous_dataset)
 
         if engine is not None and engine == "bigquery":
