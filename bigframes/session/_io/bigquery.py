@@ -309,5 +309,9 @@ def pandas_to_bigquery_streaming(
     )
     grouped = table_expression.group_by(ordering_col)
     return grouped.aggregate(
-        **{column: grouped[column].arbitrary() for column in grouped.columns}
+        **{
+            column: table_expression[column].arbitrary()
+            for column in table_expression.columns
+            if column != ordering_col
+        }
     )

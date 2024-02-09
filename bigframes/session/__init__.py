@@ -81,6 +81,7 @@ import bigframes.session._io.bigquery as bigframes_io
 import bigframes.session.clients
 import bigframes.session.validation
 import bigframes.version
+import third_party.bigframes_vendored.google_cloud_bigquery._pandas_helpers as _pandas_helpers
 
 # Even though the ibis.backends.bigquery import is unused, it's needed
 # to register new and replacement ops with the Ibis BigQuery backend.
@@ -904,17 +905,10 @@ class Session(
         pandas_dataframe_copy.index.names = new_idx_ids
         pandas_dataframe_copy.columns = pandas.Index(new_col_ids)
         pandas_dataframe_copy[ordering_col] = np.arange(pandas_dataframe_copy.shape[0])
-
-        # Specify the datetime dtypes, which is auto-detected as timestamp types.
-        schema: list[bigquery.SchemaField] = []
-        for column, dtype in zip(
-            pandas_dataframe_copy.columns, pandas_dataframe_copy.dtypes
-        ):
-            if dtype == "timestamp[us][pyarrow]":
-                schema.append(
-                    bigquery.SchemaField(column, bigquery.enums.SqlTypeNames.DATETIME)
-                )
-            # TODO(swast): Convert all pandas dtypes to BigQuery type, not just DATETIME.
+        schema: Sequence[bigquery.SchemaField] = _pandas_helpers.dataframe_to_bq_schema(
+            pandas_dataframe_copy,
+            (),
+        )
 
         if write_engine == "default":
             # TODO(swast): pick write engine based on same heuristic as DataFrame constructor.
