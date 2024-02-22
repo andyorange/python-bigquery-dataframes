@@ -30,6 +30,7 @@ from typing import (
     Iterable,
     List,
     Literal,
+    Mapping,
     MutableSequence,
     Optional,
     Sequence,
@@ -120,6 +121,9 @@ _VALID_WRITE_ENGINES = [
 WriteEngineType = Literal[
     "default", "bigquery_inline", "bigquery_load", "bigquery_streaming"
 ]
+# BigQuery has 1 MB query size limit, 5000 items shouldn't take more than 10% of this depending on data type.
+# TODO(tbergeron): Convert to bytes-based limit
+MAX_INLINE_DF_SIZE = 5000
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +131,11 @@ logger = logging.getLogger(__name__)
 def _is_query(query_or_table: str) -> bool:
     """Determine if `query_or_table` is a table ID or a SQL string"""
     return re.search(r"\s", query_or_table.strip(), re.MULTILINE) is not None
+
+
+def _is_table_with_wildcard_suffix(query_or_table: str) -> bool:
+    """Determine if `query_or_table` is a table and contains a wildcard suffix."""
+    return not _is_query(query_or_table) and query_or_table.endswith("*")
 
 
 class Session(
@@ -262,7 +271,9 @@ class Session(
         elif col_order:
             columns = col_order
 
-        query_or_table = self._filters_to_query(query_or_table, columns, filters)
+        filters = list(filters)
+        if len(filters) != 0 or _is_table_with_wildcard_suffix(query_or_table):
+            query_or_table = self._to_query(query_or_table, columns, filters)
 
         if _is_query(query_or_table):
             return self._read_gbq_query(
@@ -286,13 +297,18 @@ class Session(
                 use_cache=use_cache,
             )
 
-    def _filters_to_query(self, query_or_table, columns, filters):
-        """Convert filters to query"""
-        if len(filters) == 0:
-            return query_or_table
-
+    def _to_query(
+        self,
+        query_or_table: str,
+        columns: Iterable[str],
+        filters: third_party_pandas_gbq.FiltersType,
+    ) -> str:
+        """Compile query_or_table with conditions(filters, wildcards) to query."""
+        filters = list(filters)
         sub_query = (
-            f"({query_or_table})" if _is_query(query_or_table) else query_or_table
+            f"({query_or_table})"
+            if _is_query(query_or_table)
+            else f"`{query_or_table}`"
         )
 
         select_clause = "SELECT " + (
@@ -301,7 +317,7 @@ class Session(
 
         where_clause = ""
         if filters:
-            valid_operators = {
+            valid_operators: Mapping[third_party_pandas_gbq.FilterOps, str] = {
                 "in": "IN",
                 "not in": "NOT IN",
                 "==": "=",
@@ -312,19 +328,16 @@ class Session(
                 "!=": "!=",
             }
 
-            if (
-                isinstance(filters, Iterable)
-                and isinstance(filters[0], Tuple)
-                and (len(filters[0]) == 0 or not isinstance(filters[0][0], Tuple))
+            # If single layer filter, add another pseudo layer. So the single layer represents "and" logic.
+            if isinstance(filters[0], tuple) and (
+                len(filters[0]) == 0 or not isinstance(list(filters[0])[0], tuple)
             ):
-                filters = [filters]
+                filters = typing.cast(third_party_pandas_gbq.FiltersType, [filters])
 
             or_expressions = []
             for group in filters:
                 if not isinstance(group, Iterable):
-                    raise ValueError(
-                        f"Filter group should be a iterable, {group} is not valid."
-                    )
+                    group = [group]
 
                 and_expressions = []
                 for filter_item in group:
@@ -343,13 +356,13 @@ class Session(
                     if operator not in valid_operators:
                         raise ValueError(f"Operator {operator} is not valid.")
 
-                    operator = valid_operators[operator]
+                    operator_str = valid_operators[operator]
 
-                    if operator in ["IN", "NOT IN"]:
+                    if operator_str in ["IN", "NOT IN"]:
                         value_list = ", ".join([repr(v) for v in value])
-                        expression = f"`{column}` {operator} ({value_list})"
+                        expression = f"`{column}` {operator_str} ({value_list})"
                     else:
-                        expression = f"`{column}` {operator} {repr(value)}"
+                        expression = f"`{column}` {operator_str} {repr(value)}"
                     and_expressions.append(expression)
 
                 or_expressions.append(" AND ".join(and_expressions))
@@ -535,6 +548,7 @@ class Session(
         index_col: Iterable[str] | str = (),
         columns: Iterable[str] = (),
         max_results: Optional[int] = None,
+        filters: third_party_pandas_gbq.FiltersType = (),
         use_cache: bool = True,
         col_order: Iterable[str] = (),
     ) -> dataframe.DataFrame:
@@ -559,6 +573,19 @@ class Session(
             )
         elif col_order:
             columns = col_order
+
+        filters = list(filters)
+        if len(filters) != 0 or _is_table_with_wildcard_suffix(query):
+            query = self._to_query(query, columns, filters)
+
+            return self._read_gbq_query(
+                query,
+                index_col=index_col,
+                columns=columns,
+                max_results=max_results,
+                api_name="read_gbq_table",
+                use_cache=use_cache,
+            )
 
         return self._read_gbq_table(
             query=query,
@@ -887,6 +914,53 @@ class Session(
         api_name: str,
         write_engine: WriteEngineType = "default",
     ) -> dataframe.DataFrame:
+        if write_engine == "default":
+            # TODO(swast): pick write engine based on same heuristic as DataFrame constructor.
+            write_engine = "bigquery_load"
+
+            if (
+                pandas_dataframe.size < MAX_INLINE_DF_SIZE
+                # TODO(swast): Workaround data types limitation in inline data.
+                and not any(
+                    (
+                        isinstance(s.dtype, pandas.ArrowDtype)
+                        or (len(s) > 0 and pandas.api.types.is_list_like(s.iloc[0]))
+                        or pandas.api.types.is_datetime64_any_dtype(s)
+                    )
+                    for _, s in pandas_dataframe.items()
+                )
+            ):
+                write_engine = "bigquery_inline"
+            write_engine = "bigquery_load"
+
+        if write_engine == "bigquery_inline":
+            return self._read_pandas_inline(pandas_dataframe)
+        elif write_engine == "bigquery_load":
+            return self._read_pandas_load_job(pandas_dataframe, api_name)
+        elif write_engine == "bigquery_streaming":
+            # table_expression = bigframes_io.pandas_to_bigquery_streaming(
+            #     bqclient=self.bqclient,
+            #     dataframe=pandas_dataframe_copy,
+            #     dataset=self._anonymous_dataset,
+            #     ibis_client=self.ibis_client,
+            #     ordering_col=ordering_col,
+            #     schema=schema,
+            # )
+            raise NotImplementedError("bigquery_streaming not yet supported")
+        else:
+            raise ValueError(
+                f"got unexpected write_engine={repr(write_engine)}, "
+                f"expected one of {repr(_VALID_WRITE_ENGINES)}."
+            )
+
+    def _read_pandas_inline(
+        self, pandas_dataframe: pandas.DataFrame
+    ) -> dataframe.DataFrame:
+        return dataframe.DataFrame(blocks.Block.from_local(pandas_dataframe))
+
+    def _read_pandas_load_job(
+        self, pandas_dataframe: pandas.DataFrame, api_name: str
+    ) -> dataframe.DataFrame:
         col_labels, idx_labels = (
             pandas_dataframe.columns.to_list(),
             pandas_dataframe.index.names,
@@ -910,41 +984,16 @@ class Session(
             (),
         )
 
-        if write_engine == "default":
-            # TODO(swast): pick write engine based on same heuristic as DataFrame constructor.
-            write_engine = "bigquery_load"
-
-        if write_engine == "bigquery_inline":
-            # TODO(swast): implement inline "memtable" same as DataFrame constructor.
-            raise NotImplementedError(
-                f'write_engine="bigquery_inline" not yet supported. {constants.FEEDBACK_LINK}'
-            )
-        elif write_engine == "bigquery_load":
-            table_expression = bigframes_io.pandas_to_bigquery_load(
-                api_name=api_name,
-                bqclient=self.bqclient,
-                dataframe=pandas_dataframe_copy,
-                dataset=self._anonymous_dataset,
-                ibis_client=self.ibis_client,
-                ordering_col=ordering_col,
-                schema=schema,
-                wait_for_job=self._start_generic_job,
-            )
-        elif write_engine == "bigquery_streaming":
-            table_expression = bigframes_io.pandas_to_bigquery_streaming(
-                bqclient=self.bqclient,
-                dataframe=pandas_dataframe_copy,
-                dataset=self._anonymous_dataset,
-                ibis_client=self.ibis_client,
-                ordering_col=ordering_col,
-                schema=schema,
-            )
-
-        else:
-            raise ValueError(
-                f"got unexpected write_engine={repr(write_engine)}, "
-                f"expected one of {repr(_VALID_WRITE_ENGINES)}."
-            )
+        table_expression = bigframes_io.pandas_to_bigquery_load(
+            api_name=api_name,
+            bqclient=self.bqclient,
+            dataframe=pandas_dataframe_copy,
+            dataset=self._anonymous_dataset,
+            ibis_client=self.ibis_client,
+            ordering_col=ordering_col,
+            schema=schema,
+            wait_for_job=self._start_generic_job,
+        )
 
         ordering = orderings.ExpressionOrdering(
             ordering_value_columns=tuple([OrderingColumnReference(ordering_col)]),
@@ -1113,7 +1162,7 @@ class Session(
                 pandas_df,
                 api_name="read_csv",
                 write_engine=write_engine,
-            )
+            )  # type: ignore
 
     def read_pickle(
         self,

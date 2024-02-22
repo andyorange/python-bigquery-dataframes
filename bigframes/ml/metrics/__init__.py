@@ -12,30 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Global Singletons for BigQuery DataFrame ML."""
-
-from bigframes.ml import core, sql
-
-_BASE_SQL_GENERATOR = sql.BaseSqlGenerator()
-_BQML_MODEL_FACTORY = core.BqmlModelFactory()
-
-_SUPPORTED_DTYPES = (
-    "bool",
-    "string",
-    "int64",
-    "float64",
-    "array<bool>",
-    "array<string>",
-    "array<int64>",
-    "array<float64>",
+from bigframes.ml.metrics import pairwise
+from bigframes.ml.metrics._metrics import (
+    accuracy_score,
+    auc,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    r2_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
 )
 
-
-def base_sql_generator() -> sql.BaseSqlGenerator:
-    """Base SQL Generator."""
-    return _BASE_SQL_GENERATOR
-
-
-def bqml_model_factory() -> core.BqmlModelFactory:
-    """BQML Model Factory"""
-    return _BQML_MODEL_FACTORY
+__all__ = [
+    "r2_score",
+    "recall_score",
+    "accuracy_score",
+    "roc_curve",
+    "roc_auc_score",
+    "auc",
+    "confusion_matrix",
+    "precision_score",
+    "f1_score",
+    "pairwise",
+]

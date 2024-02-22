@@ -102,11 +102,11 @@ class Block:
     ):
         """Construct a block object, will create default index if no index columns specified."""
         index_columns = list(index_columns)
-        if index_labels:
+        if index_labels is not None:
             index_labels = list(index_labels)
             if len(index_labels) != len(index_columns):
                 raise ValueError(
-                    "'index_columns' and 'index_labels' must have equal length"
+                    f"'index_columns' (size {len(index_columns)}) and 'index_labels' (size {len(index_labels)}) must have equal length"
                 )
         if len(index_columns) == 0:
             new_index_col_id = guid.generate_guid()
@@ -1040,26 +1040,29 @@ class Block:
         self._stats_cache[column_id].update(stats_map)
         return stats_map[stat.name]
 
-    def get_corr_stat(self, column_id_left: str, column_id_right: str):
+    def get_binary_stat(
+        self, column_id_left: str, column_id_right: str, stat: agg_ops.BinaryAggregateOp
+    ):
         # TODO(kemppeterson): Clean up the column names for DataFrames.corr support
         # TODO(kemppeterson): Add a cache here.
-        corr_aggregations = [
+        aggregations = [
             (
-                column_id_left,
-                column_id_right,
-                "corr_" + column_id_left + column_id_right,
+                ex.BinaryAggregation(
+                    stat, ex.free_var(column_id_left), ex.free_var(column_id_right)
+                ),
+                f"{stat.name}_{column_id_left}{column_id_right}",
             )
         ]
-        expr = self.expr.corr_aggregate(corr_aggregations)
+        expr = self.expr.aggregate(aggregations)
         offset_index_id = guid.generate_guid()
         expr = expr.promote_offsets(offset_index_id)
         block = Block(
             expr,
             index_columns=[offset_index_id],
-            column_labels=[a[2] for a in corr_aggregations],
+            column_labels=[a[1] for a in aggregations],
         )
         df, _ = block.to_pandas()
-        return df.loc[0, "corr_" + column_id_left + column_id_right]
+        return df.loc[0, f"{stat.name}_{column_id_left}{column_id_right}"]
 
     def summarize(
         self,
@@ -1085,6 +1088,46 @@ class Block:
         )
         labels = self._get_labels_for_columns(column_ids)
         return Block(expr, column_labels=labels, index_columns=[label_col_id])
+
+    def corr(self):
+        """Returns a block object to compute the self-correlation on this block."""
+        aggregations = [
+            (
+                ex.BinaryAggregation(
+                    agg_ops.CorrOp(), ex.free_var(left_col), ex.free_var(right_col)
+                ),
+                f"{left_col}-{right_col}",
+            )
+            for left_col in self.value_columns
+            for right_col in self.value_columns
+        ]
+        expr = self.expr.aggregate(aggregations)
+
+        index_col_ids = [
+            guid.generate_guid() for i in range(self.column_labels.nlevels)
+        ]
+        input_count = len(self.value_columns)
+        unpivot_columns = tuple(
+            (
+                guid.generate_guid(),
+                tuple(expr.column_ids[input_count * i : input_count * (i + 1)]),
+            )
+            for i in range(input_count)
+        )
+        labels = self._get_labels_for_columns(self.value_columns)
+
+        expr = expr.unpivot(
+            row_labels=labels,
+            index_col_ids=index_col_ids,
+            unpivot_columns=unpivot_columns,
+        )
+
+        return Block(
+            expr,
+            column_labels=self.column_labels,
+            index_columns=index_col_ids,
+            index_labels=self.column_labels.names,
+        )
 
     def _standard_stats(self, column_id) -> typing.Sequence[agg_ops.UnaryAggregateOp]:
         """
@@ -1886,7 +1929,7 @@ class BlockIndexProperties:
         df = expr.session._rows_to_dataframe(results, dtypes)
         df = df.set_index(index_columns)
         index = df.index
-        index.names = list(self._block._index_labels)
+        index.names = list(self._block._index_labels)  # type:ignore
         return index
 
     def resolve_level(self, level: LevelsType) -> typing.Sequence[str]:
