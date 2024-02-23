@@ -915,9 +915,7 @@ class Session(
         write_engine: WriteEngineType = "default",
     ) -> dataframe.DataFrame:
         if write_engine == "default":
-            # TODO(swast): pick write engine based on same heuristic as DataFrame constructor.
-            write_engine = "bigquery_load"
-
+            # Pick write engine based on same heuristic as DataFrame constructor.
             if (
                 pandas_dataframe.size < MAX_INLINE_DF_SIZE
                 # TODO(swast): Workaround data types limitation in inline data.
