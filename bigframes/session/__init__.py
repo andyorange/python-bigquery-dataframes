@@ -165,7 +165,7 @@ class Session(
             context = bigquery_options.BigQueryOptions()
 
         # TODO(swast): Get location from the environment.
-        if context is None or context.location is None:
+        if context.location is None:
             self._location = "US"
             warnings.warn(
                 f"No explicit location is set, so using location {self._location} for the session.",
@@ -1598,7 +1598,9 @@ class Session(
             ibis_expr, cluster_cols=cluster_cols, api_name="cached"
         )
         table_expression = self.ibis_client.table(
-            f"{tmp_table.project}.{tmp_table.dataset_id}.{tmp_table.table_id}"
+            tmp_table.table_id,
+            schema=tmp_table.dataset_id,
+            database=tmp_table.project,
         )
         new_columns = [table_expression[column] for column in compiled_value.column_ids]
         new_hidden_columns = [
@@ -1627,7 +1629,9 @@ class Session(
             ibis_expr, cluster_cols=["bigframes_offsets"], api_name="cached"
         )
         table_expression = self.ibis_client.table(
-            f"{tmp_table.project}.{tmp_table.dataset_id}.{tmp_table.table_id}"
+            tmp_table.table_id,
+            schema=tmp_table.dataset_id,
+            database=tmp_table.project,
         )
         new_columns = [table_expression[column] for column in compiled_value.column_ids]
         new_hidden_columns = [table_expression["bigframes_offsets"]]
