@@ -269,8 +269,8 @@ def pandas_to_bigquery_load(
 
     return ibis_client.table(  # type: ignore
         destination.table_id,
-        # TODO: use "dataset_id" as the "schema"
-        database=f"{destination.project}.{destination.dataset_id}",
+        schema=destination.dataset_id,
+        database=destination.project,
     )
 
 
