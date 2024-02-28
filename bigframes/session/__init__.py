@@ -900,13 +900,19 @@ class Session(
                 How data should be written to BigQuery (if at all). Supported
                 values:
 
+                * "default":
+                  Select either "bigquery_inline" or "bigquery_load",
+                  depending on data size.
+                * "bigquery_inline": Inline data in BigQuery SQL.
                 * "bigquery_load": Use a BigQuery load job.
                 * "bigquery_streaming": Use the BigQuery streaming JSON API.
 
         Returns:
             bigframes.dataframe.DataFrame: The BigQuery DataFrame.
         """
-        return self._read_pandas(pandas_dataframe, "read_pandas")
+        return self._read_pandas(
+            pandas_dataframe, "read_pandas", write_engine=write_engine
+        )
 
     def _read_pandas(
         self,
@@ -1167,6 +1173,8 @@ class Session(
         filepath_or_buffer: FilePath | ReadPickleBuffer,
         compression: CompressionOptions = "infer",
         storage_options: StorageOptions = None,
+        *,
+        write_engine: WriteEngineType = "default",
     ):
         pandas_obj = pandas.read_pickle(
             filepath_or_buffer,
@@ -1181,12 +1189,13 @@ class Session(
                 pandas_obj.to_frame(), api_name="read_pickle"
             )
             return bigframes_df[bigframes_df.columns[0]]
-        return self._read_pandas(pandas_obj, "read_pickle")
+        return self._read_pandas(pandas_obj, "read_pickle", write_engine=write_engine)
 
     def read_parquet(
         self,
         path: str | IO["bytes"],
     ) -> dataframe.DataFrame:
+        # TODO(swast): Add engine and write_engine.
         # Note: "engine" is omitted because it is redundant. Loading a table
         # from a pandas DataFrame will just create another parquet file + load
         # job anyway.
@@ -1211,8 +1220,13 @@ class Session(
         encoding: Optional[str] = None,
         lines: bool = False,
         engine: Literal["ujson", "pyarrow", "bigquery"] = "ujson",
+        write_engine: WriteEngineType = "default",
         **kwargs,
     ) -> dataframe.DataFrame:
+        bigframes.session.validation.validate_engine_compatibility(
+            engine=engine,
+            write_engine=write_engine,
+        )
         table = bigframes_io.random_table(self._anonymous_dataset)
 
         if engine == "bigquery":
@@ -1279,7 +1293,9 @@ class Session(
                     engine=engine,
                     **kwargs,
                 )
-            return self._read_pandas(pandas_df, api_name="read_json")
+            return self._read_pandas(
+                pandas_df, api_name="read_json", write_engine=write_engine
+            )
 
     def _check_file_size(self, filepath: str):
         max_size = 1024 * 1024 * 1024  # 1 GB in bytes
