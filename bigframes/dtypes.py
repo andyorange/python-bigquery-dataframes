@@ -265,11 +265,16 @@ def ibis_dtype_to_arrow_dtype(ibis_dtype: ibis_dtypes.DataType) -> pa.DataType:
         )
 
     if isinstance(ibis_dtype, ibis_dtypes.Timestamp):
+        # Only UTC timezone or None is supported.
+        tz = ibis_dtype.timezone
+        if tz not in (None, "UTC"):
+            raise NotImplementedError(
+                f"Only UTC timezone is supported, got {repr(tz)}. {constants.FEEDBACK_LINK}"
+            )
         return pa.timestamp(
             # Only microsecond precision is supported in BigQuery.
             "us",
-            # Only UTC timezone or None is supported.
-            tz=None if ibis_dtype.timezone is None else "UTC",
+            tz=tz,
         )
 
     if isinstance(ibis_dtype, ibis_dtypes.Decimal):
