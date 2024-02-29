@@ -304,8 +304,8 @@ def pandas_to_bigquery_streaming(
     # deduplicate based on the ordering ID, which is guaranteed to be unique.
     table_expression = ibis_client.table(  # type: ignore
         destination.table_id,
-        # TODO: use "dataset_id" as the "schema"
-        database=f"{destination.project}.{destination.dataset_id}",
+        schema=destination.dataset_id,
+        database=destination.project,
     )
     grouped = table_expression.group_by(ordering_col)
     return grouped.aggregate(
