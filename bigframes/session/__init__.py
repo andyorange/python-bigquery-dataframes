@@ -929,18 +929,10 @@ class Session(
 
         if write_engine == "bigquery_inline":
             return self._read_pandas_inline(pandas_dataframe)
-        elif write_engine == "bigquery_load":
-            return self._read_pandas_load_job(pandas_dataframe, api_name)
-        elif write_engine == "bigquery_streaming":
-            # table_expression = bigframes_io.pandas_to_bigquery_streaming(
-            #     bqclient=self.bqclient,
-            #     dataframe=pandas_dataframe_copy,
-            #     dataset=self._anonymous_dataset,
-            #     ibis_client=self.ibis_client,
-            #     ordering_col=ordering_col,
-            #     schema=schema,
-            # )
-            raise NotImplementedError("bigquery_streaming not yet supported")
+        elif write_engine in ("bigquery_load", "bigquery_streaming"):
+            return self._read_pandas_bigquery_table(
+                pandas_dataframe, api_name, write_engine=write_engine
+            )
         else:
             raise ValueError(
                 f"got unexpected write_engine={repr(write_engine)}, "
@@ -952,8 +944,11 @@ class Session(
     ) -> dataframe.DataFrame:
         return dataframe.DataFrame(blocks.Block.from_local(pandas_dataframe))
 
-    def _read_pandas_load_job(
-        self, pandas_dataframe: pandas.DataFrame, api_name: str
+    def _read_pandas_bigquery_table(
+        self,
+        pandas_dataframe: pandas.DataFrame,
+        api_name: str,
+        write_engine: str,
     ) -> dataframe.DataFrame:
         col_labels, idx_labels = (
             pandas_dataframe.columns.to_list(),
@@ -978,16 +973,28 @@ class Session(
             (),
         )
 
-        table_expression = bigframes_io.pandas_to_bigquery_load(
-            api_name=api_name,
-            bqclient=self.bqclient,
-            dataframe=pandas_dataframe_copy,
-            dataset=self._anonymous_dataset,
-            ibis_client=self.ibis_client,
-            ordering_col=ordering_col,
-            schema=schema,
-            wait_for_job=self._start_generic_job,
-        )
+        if write_engine == "bigquery_load":
+            table_expression = bigframes_io.pandas_to_bigquery_load(
+                api_name=api_name,
+                bqclient=self.bqclient,
+                dataframe=pandas_dataframe_copy,
+                dataset=self._anonymous_dataset,
+                ibis_client=self.ibis_client,
+                ordering_col=ordering_col,
+                schema=schema,
+                wait_for_job=self._start_generic_job,
+            )
+        elif write_engine == "bigquery_streaming":
+            table_expression = bigframes_io.pandas_to_bigquery_streaming(
+                bqclient=self.bqclient,
+                dataframe=pandas_dataframe_copy,
+                dataset=self._anonymous_dataset,
+                ibis_client=self.ibis_client,
+                ordering_col=ordering_col,
+                schema=schema,
+            )
+        else:
+            raise ValueError(f"got unexpected write_engine={repr(write_engine)}")
 
         ordering = orderings.ExpressionOrdering(
             ordering_value_columns=tuple([OrderingColumnReference(ordering_col)]),
