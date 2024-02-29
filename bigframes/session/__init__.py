@@ -110,17 +110,6 @@ _VALID_ENCODINGS = {
     "UTF-32LE",
 }
 
-# TODO(swast): Use unpack operator to avoid redundancy when Python 3.11 is
-# the minimum version.
-_VALID_WRITE_ENGINES = [
-    "default",
-    "bigquery_inline",
-    "bigquery_load",
-    "bigquery_streaming",
-]
-WriteEngineType = Literal[
-    "default", "bigquery_inline", "bigquery_load", "bigquery_streaming"
-]
 # BigQuery has 1 MB query size limit, 5000 items shouldn't take more than 10% of this depending on data type.
 # TODO(tbergeron): Convert to bytes-based limit
 MAX_INLINE_DF_SIZE = 5000
@@ -870,7 +859,7 @@ class Session(
         self,
         pandas_dataframe: pandas.DataFrame,
         *,
-        write_engine: WriteEngineType = "default",
+        write_engine: constants.WriteEngineType = "default",
     ) -> dataframe.DataFrame:
         """Loads DataFrame from a pandas DataFrame.
 
@@ -918,7 +907,7 @@ class Session(
         self,
         pandas_dataframe: pandas.DataFrame,
         api_name: str,
-        write_engine: WriteEngineType = "default",
+        write_engine: constants.WriteEngineType = "default",
     ) -> dataframe.DataFrame:
         if write_engine == "default":
             # Pick write engine based on same heuristic as DataFrame constructor.
@@ -935,7 +924,8 @@ class Session(
                 )
             ):
                 write_engine = "bigquery_inline"
-            write_engine = "bigquery_load"
+            else:
+                write_engine = "bigquery_load"
 
         if write_engine == "bigquery_inline":
             return self._read_pandas_inline(pandas_dataframe)
@@ -954,7 +944,7 @@ class Session(
         else:
             raise ValueError(
                 f"got unexpected write_engine={repr(write_engine)}, "
-                f"expected one of {repr(_VALID_WRITE_ENGINES)}."
+                f"expected one of {repr(constants.VALID_WRITE_ENGINES)}."
             )
 
     def _read_pandas_inline(
@@ -1062,7 +1052,7 @@ class Session(
             Literal["c", "python", "pyarrow", "python-fwf", "bigquery"]
         ] = None,
         encoding: Optional[str] = None,
-        write_engine: WriteEngineType = "default",
+        write_engine: constants.WriteEngineType = "default",
         **kwargs,
     ) -> dataframe.DataFrame:
         bigframes.session.validation.validate_engine_compatibility(
@@ -1174,7 +1164,7 @@ class Session(
         compression: CompressionOptions = "infer",
         storage_options: StorageOptions = None,
         *,
-        write_engine: WriteEngineType = "default",
+        write_engine: constants.WriteEngineType = "default",
     ):
         pandas_obj = pandas.read_pickle(
             filepath_or_buffer,
@@ -1220,7 +1210,7 @@ class Session(
         encoding: Optional[str] = None,
         lines: bool = False,
         engine: Literal["ujson", "pyarrow", "bigquery"] = "ujson",
-        write_engine: WriteEngineType = "default",
+        write_engine: constants.WriteEngineType = "default",
         **kwargs,
     ) -> dataframe.DataFrame:
         bigframes.session.validation.validate_engine_compatibility(

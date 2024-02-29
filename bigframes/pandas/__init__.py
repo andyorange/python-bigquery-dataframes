@@ -438,7 +438,7 @@ def read_csv(
         Literal["c", "python", "pyarrow", "python-fwf", "bigquery"]
     ] = None,
     encoding: Optional[str] = None,
-    write_engine: bigframes.session.WriteEngineType = "default",
+    write_engine: constants.WriteEngineType = "default",
     **kwargs,
 ) -> bigframes.dataframe.DataFrame:
     return global_session.with_default_session(
@@ -470,7 +470,7 @@ def read_json(
     encoding: Optional[str] = None,
     lines: bool = False,
     engine: Literal["ujson", "pyarrow", "bigquery"] = "ujson",
-    write_engine: bigframes.session.WriteEngineType = "default",
+    write_engine: constants.WriteEngineType = "default",
     **kwargs,
 ) -> bigframes.dataframe.DataFrame:
     return global_session.with_default_session(
@@ -481,6 +481,7 @@ def read_json(
         encoding=encoding,
         lines=lines,
         engine=engine,
+        write_engine=write_engine,
         **kwargs,
     )
 
@@ -574,10 +575,15 @@ def read_gbq_table(
 read_gbq_table.__doc__ = inspect.getdoc(bigframes.session.Session.read_gbq_table)
 
 
-def read_pandas(pandas_dataframe: pandas.DataFrame) -> bigframes.dataframe.DataFrame:
+def read_pandas(
+    pandas_dataframe: pandas.DataFrame,
+    *,
+    write_engine: constants.WriteEngineType = "default",
+) -> bigframes.dataframe.DataFrame:
     return global_session.with_default_session(
         bigframes.session.Session.read_pandas,
         pandas_dataframe,
+        write_engine=write_engine,
     )
 
 
@@ -589,7 +595,7 @@ def read_pickle(
     compression: CompressionOptions = "infer",
     storage_options: StorageOptions = None,
     *,
-    write_engine: bigframes.session.WriteEngineType = "default",
+    write_engine: constants.WriteEngineType = "default",
 ):
     return global_session.with_default_session(
         bigframes.session.Session.read_pickle,
