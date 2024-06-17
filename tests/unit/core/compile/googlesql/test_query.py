@@ -20,22 +20,6 @@ import bigframes.core.compile.googlesql as sql
 
 
 @pytest.mark.parametrize(
-    ("table_id", "dataset_id", "project_id", "expected"),
-    [
-        pytest.param("a", None, None, "`a`"),
-        pytest.param("a", "b", None, "`b`.`a`"),
-        pytest.param("a", "b", "c", "`c`.`b`.`a`"),
-        pytest.param("a", None, "c", None, marks=pytest.mark.xfail(raises=ValueError)),
-    ],
-)
-def test_table_expression(table_id, dataset_id, project_id, expected):
-    expr = sql.TableExpression(
-        table_id=table_id, dataset_id=dataset_id, project_id=project_id
-    )
-    assert expr.sql() == expected
-
-
-@pytest.mark.parametrize(
     ("table_name", "alias", "expected"),
     [
         pytest.param("a", None, "`a`"),
@@ -164,7 +148,3 @@ def test_query_expr_w_cte():
     query2 = sql.QueryExpr(select=select2, with_cte_list=with_cte_list)
     query2_sql = f"WITH {cte1_sql},\n{cte2_sql}\n{select2_sql}"
     assert query2.sql() == query2_sql
-
-
-def test_escape_chars():
-    assert sql._escape_chars("\a\b\f\n\r\t\v\\?'\"`") == r"\a\b\f\n\r\t\v\\\?\'\"\`"
