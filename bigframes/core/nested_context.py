@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import bigframes._config as config
+from bigframes._config import options as config_options
 import bigframes.core.blocks as blocks
 import bigframes.core.nodes as nodes
 from bigframes.dtypes import is_struct_like as dt_is_struct_like
@@ -97,10 +97,6 @@ class SchemaSourceHandler:
         #TODO: Debug log info
         #print([el for el in topological_sort(dag)])
         return dag_ret
-    
-    @staticmethod
-    def leaves(dag: DiGraph):
-        return [node for node in dag.nodes if dag.out_degree(node) == 0]
 
     # two identical properties, depending on what meaning you prefer
     def _dag_to_schema(self):
@@ -143,7 +139,6 @@ class SchemaSourceHandler:
         """Returns SchemaSource if src exists, else None."""
         node_hash = bfnode_hash(src)
         return self._sources.get(node_hash, None)
-
 
 @final
 class SchemaTrackingContextManager:
@@ -274,7 +269,7 @@ class SchemaTrackingContextManager:
 
     # Context Manager interface
     def __enter__(self):
-        assert(config.options.bigquery.project is not None and config.options.bigquery.location is not None)
+        assert(config_options.bigquery.project is not None and config_options.bigquery.location is not None)
         SchemaTrackingContextManager._is_active = True
         self.reset_block_markers()
         return self

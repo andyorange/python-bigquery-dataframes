@@ -23,7 +23,8 @@ import bigframes.pandas as bfpd
 import bigframes.core as core
 from bigframes.core.schema_tracking import set_project
 from bigframes.core.nested_context import NestedDataError
-from bigframes.dataframe import DataFrame, nested_data_context_manager
+from bigframes.dataframe import DataFrame #nested_data_context_manager
+from bigframes.nesteddataframe import Tbase
 #from bigframes.core.nodes import NestedDataContextManager
 #from bigframes.core import Session
 
@@ -111,23 +112,28 @@ if __name__ == "__main__":
     table = "andreas_beschorner.nested_complex" # table="andreas_beschorner.nested_tiny"
     #dfp = create_simple_nested(True)
 
-    with nested_data_context_manager as ncm:
-        #df = bfpd.read_gbq(f"SELECT * FROM {table} limit 10")
-        #ncm.add_df(df)
-        #df = bfpd.DataFrame(dfp)
-        df = create_complex_nested(False)
+    dfg = Tbase()  #DataFrameGuard()
+    dfg.tgetter("Blub", [17, 24])
+    dfg.tsetter("Bla", [1, 3, -2])
+    print(dfg.nage)
+    
+    # with nested_data_context_manager as ncm:
+    #     #df = bfpd.read_gbq(f"SELECT * FROM {table} limit 10")
+    #     #ncm.add_df(df)
+    #     #df = bfpd.DataFrame(dfp)
+    #     df = create_complex_nested(False)
 
-        ncm.add(df, layer_separator=ncm.sep_layers, struct_separator=ncm.sep_structs)
-        print(ncm.lineage(df))
-        #df_n.to_gbq("andreas_beschorner.nested_complex_half")
-        try:
-            df = df.rename(columns={"person.address.county": "person.address.location"})
-        except NestedDataError as ne:
-            print(ne)
-        df = df.rename(columns={"person.address.country": "location"}) #df = df.rename(columns={"person.address.country": "person.address.location"})
-        lin = ncm.schema_lineage(df)
-        if lin is not None:
-            print(lin)
-        pass
+    #     ncm.add(df, layer_separator=ncm.sep_layers, struct_separator=ncm.sep_structs)
+    #     print(ncm.lineage(df))
+    #     #df_n.to_gbq("andreas_beschorner.nested_complex_half")
+    #     try:
+    #         df = df.rename(columns={"person.address.county": "person.address.location"})
+    #     except NestedDataError as ne:
+    #         print(ne)
+    #     df = df.rename(columns={"person.address.country": "location"}) #df = df.rename(columns={"person.address.country": "person.address.location"})
+    #     lin = ncm.schema_lineage(df)
+    #     if lin is not None:
+    #         print(lin)
+    #     pass
     pass
     

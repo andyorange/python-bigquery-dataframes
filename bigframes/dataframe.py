@@ -16,8 +16,7 @@
 
 from __future__ import annotations
 
-from abc import ABCMeta, abstractmethod
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping, Callable
 import datetime
 import inspect
 import itertools
@@ -25,7 +24,7 @@ import re
 import sys
 import textwrap
 import typing
-#TODO use collections instead!
+#TODO (abeschorner): use collections instead!
 from typing import (
     Dict,
     List,
@@ -37,7 +36,6 @@ from typing import (
 )
 import warnings
 
-import bigframes._config as config
 import bigframes_vendored.constants as constants
 import bigframes_vendored.pandas.core.frame as vendored_pandas_frame
 import bigframes_vendored.pandas.pandas._typing as vendored_pandas_typing
@@ -49,7 +47,7 @@ import pandas.io.formats.format
 import pyarrow
 import tabulate
 
-import bigframes
+import bigframes  #TODO (abeschorner): really???
 import bigframes._config.display_options as display_options
 import bigframes.constants
 import bigframes.core
@@ -81,8 +79,6 @@ import bigframes.series
 import bigframes.series as bf_series
 import bigframes.session._io.bigquery
 
-from bigframes.core.nested_context import SchemaTrackingContextManager, schema_tracking_factory
-#from bigframes.core import nested_data_context_manager
 
 if typing.TYPE_CHECKING:
     from _typeshed import SupportsRichComparison
@@ -101,59 +97,8 @@ ERROR_IO_REQUIRES_WILDCARD = (
     f"{constants.FEEDBACK_LINK}"
 )
 
-# nested data
-options = config.options
-
-# to guarantee singleton creation, we prohibit inheritnig from the class
-nested_data_context_manager: SchemaTrackingContextManager = schema_tracking_factory()
-
-class CMNnested(ABCMeta):
-    def __init__(self, func: Callable):
-        self.func = func
-
-    def __call__(self, *args, **kwargs):
-        if nested_data_context_manager.active():
-            #TODO (abeschorner): handle multiple parents
-            current_block = args[0].block
-            nested_data_context_manager.block_start = current_block
-            ncm_ref = nested_data_context_manager._source_handler.sources.get(current_block, None)
-            if ncm_ref is not None:
-                res = self.func(*args, **kwargs)
-                nested_data_context_manager._block_end = res.block
-                nested_data_context_manager.step() #current_block, res.block, nested_data_context_manager.latest_changes()) # or current_block.expr.node? nodes or blocks?
-                nested_data_context_manager.reset_block_markers()
-            else:
-                #TODO: add node to ncm
-                raise KeyError(f"Unknown nested node {args[0]}")
-        return res
-
-    @abstractmethod
-    def _nesting(self) -> dict:
-        ...
-
-    @property
-    def nesting(self) -> dict:
-        return self._nesting()
-
-
-def cm_nested(func: Callable):
-    def wrapper(*args, **kwargs):
-        if nested_data_context_manager.active():
-            #TODO (abeschorner): handle multiple parents
-            current_block = args[0]._block           
-            nested_data_context_manager._block_start = current_block
-            prev_op = nested_data_context_manager.prev_changes()
-            prev_num_ops = nested_data_context_manager.num_nested_commands
-            res = func(*args, **kwargs)
-            if (prev_op == nested_data_context_manager.prev_changes()) | (nested_data_context_manager.num_nested_commands <= prev_num_ops):
-                raise ValueError(f"Nested operation {func.__qualname__} did not set changes in the nested_data_context_manager!")
-            nested_data_context_manager._block_end = res._block      
-            nested_data_context_manager.step() # or current_block.expr.node? nodes or blocks?
-            nested_data_context_manager.reset_block_markers()
-        return res
-    return wrapper
-
-
+#TODO (abeschorner): Refactor. Separate sql related from Pandas related stuff into a different class and compose. No mult. inherit.
+#TODO(abeschorner): Separate memory usage and representation (html, string), perhaps also exports (needs only blocks mostly, but no DataFrame functionality)
 # Inherits from pandas DataFrame so that we can use the same docstrings.
 @log_adapter.class_logger
 class DataFrame(vendored_pandas_frame.DataFrame):
@@ -173,7 +118,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         *,
         session: typing.Optional[bigframes.session.Session] = None,
     ):
-        global bigframes
+        global bigframes  #TODO (abeschorner): This is a complete NoGo, having ALL of bigframes in the DataFrame class. And it calls for circular dependencies.
 
         if copy is not None and not copy:
             raise ValueError(
@@ -238,7 +183,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
                 )
             self._block = block
 
-        else:
+        else: #TODO (abeschorner): ??
             import bigframes.pandas
 
             pd_dataframe = pandas.DataFrame(
@@ -647,6 +592,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         block = block.drop_columns([filter_col_id])
         return DataFrame(block)
 
+    #TODO (abeschorner): Does all this really need to be in _getattr_, processed in each function called? Such a danger for recurson and circular import.
     def __getattr__(self, key: str):
         # Protect against recursion errors with uninitialized DataFrame
         # objects. See:
@@ -1577,8 +1523,6 @@ class DataFrame(vendored_pandas_frame.DataFrame):
     def _resolve_levels(self, level: LevelsType) -> typing.Sequence[str]:
         return self._block.index.resolve_level(level)
 
-    #@bigframes.core.cm_nested
-    @cm_nested
     def rename(self, *, columns: Mapping[blocks.Label, blocks.Label]) -> DataFrame:
         """
         Rename is special in the context of nested data, as we allow column name changes for struct columns!
@@ -1586,7 +1530,6 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         """
         block = self._block.rename(columns=columns)
         ret = DataFrame(block)
-        nested_data_context_manager.add_changes(DataFrame.rename.__qualname__, self._block._expr.node, ret._block._expr.node, columns, fct=DataFrame.rename)
         return ret
 
     def rename_axis(
@@ -2687,7 +2630,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         left_on: Union[blocks.Label, Sequence[blocks.Label], None] = None,
         right_on: Union[blocks.Label, Sequence[blocks.Label], None] = None,
         sort: bool = False,
-        suffixes: tuple[str, str] = ("_x", "_y"),
+        suffixes: tuple[str, str] = ("_x", "_y")
     ) -> DataFrame:
         if how == "cross":
             if on is not None:
