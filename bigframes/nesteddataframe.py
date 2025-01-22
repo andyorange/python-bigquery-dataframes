@@ -93,7 +93,7 @@ class SchemaTracker:
 
         #TODO: Debug log info
         #print([el for el in topological_sort(dag)])
-        return dag_ret    
+        return dag_ret
 
     def _explode_nested(self, df: DataFrame, columns: list|None=None) -> tuple[DataFrame, dict[str, pa_datatype]]:
         """
@@ -120,7 +120,7 @@ class SchemaTracker:
             nested_col = []
             parent = ""
             for col, dtp in schema.items(): 
-                pref = col.rsplit(self.layer_separator, 1)[0]
+                pref = col.rsplit(self.sep_layers, 1)[0]
                 _parent = [p for p in prefixes if pref == p.rsplit(self.sep_layers, 1)[0]]
                 _parent = _parent[0].rstrip(self.sep_layers) if len(_parent) > 0 else parent
                 if bigframes.dtypes.is_struct_like(dtp):
