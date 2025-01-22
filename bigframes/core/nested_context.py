@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 #TODO: edge attribute: action done (renaming, OHE, ...) plus resulting child node and parent(s)
 
 # -- schema tracking --
-def bfnode_hash(node: nodes.BigFrameNode):
-    return hash(node)
+# def bfnode_hash(node: nodes.BigFrameNode):
+#     return hash(node)
 
 
 class NestedDataError(Exception):
@@ -36,14 +36,25 @@ class NestedDataError(Exception):
         
 
 class SchemaSource:
+    _base_root_name = "_root_"
+    
     def __init__(self, node_flattened: nodes.BigFrameNode, dag: DiGraph, 
-                 schema: dict, schema_orig: Tuple[SchemaField, ...] | None=None,
-                 ) -> None:
+                 schema: dict, schema_orig: Tuple[SchemaField, ...] | None=None) -> None:
         self.node_flattened = node_flattened
         self.dag = dag
         self.schema = schema
         self.schema_orig = schema_orig
-        
+
+    @staticmethod
+    def _tree_from_strings(paths: list[str], struct_separator: str) -> dict:
+        root = {}
+        for path in paths:
+            parts = path.split(struct_separator)
+            node = root
+            for part in parts:
+                node = node.setdefault(part, {})
+        return root
+    
     @property
     def is_valid(self) -> bool:
         """
@@ -59,31 +70,6 @@ class SchemaSource:
 
     def inherit(self, new_node: nodes.BigFrameNode):
         return SchemaSource(new_node, self.dag, self.schema, schema_orig=self.schema_orig)
-
-class SchemaSourceHandler:
-    _base_root_name = "_root_"
-
-    def __init__(self):
-        self._sources = {}
-        self._order = []
-
-    @property
-    def sources(self) -> dict:
-        return self._sources
-
-    @property
-    def order(self) -> list:
-        return self._order
-
-    @staticmethod
-    def _tree_from_strings(paths: list[str], struct_separator: str) -> dict:
-        root = {}
-        for path in paths:
-            parts = path.split(struct_separator)
-            node = root
-            for part in parts:
-                node = node.setdefault(part, {})
-        return root
     
     def _init_dag_from_df_schema(self, dag: DiGraph, schema: dict[str, tuple], layer_separator: str, struct_separator: str) -> DiGraph:
         dag_ret = dag
@@ -112,10 +98,6 @@ class SchemaSourceHandler:
         #dag_dict = self._tree_from_strings(cols_flattened, struct_separator=layer_separator)
         dag_res = self._init_dag_from_df_schema(dag, schema, layer_separator=layer_separator, struct_separator=struct_separator)
         return dag_res
-    
-    def add_source(self, hash_df: int, source:SchemaSource):
-        self._sources[hash_df] = source
-        self._order.append(hash_df)
 
     def _value_multiplicities(self, input_dict: dict[str, list[str]]) -> dict[tuple, str]:
         """
@@ -128,17 +110,12 @@ class SchemaSourceHandler:
         """
         inverted_dict = {}
         for key, value in input_dict.items():
-
             value_tuple = tuple(sorted(value))
             inverted_dict.setdefault(value_tuple, []).append(key)
         duplicates = {value: keys for value, keys in inverted_dict.items() if len(keys) > 1}
         #TODO: add NodeInfo?
         return duplicates
 
-    def get(self, src: nodes.BigFrameNode) -> SchemaSource|None:
-        """Returns SchemaSource if src exists, else None."""
-        node_hash = bfnode_hash(src)
-        return self._sources.get(node_hash, None)
 
 @final
 class SchemaTrackingContextManager:

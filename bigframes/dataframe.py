@@ -2615,7 +2615,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def merge(
         self,
-        right: DataFrame,
+        right: DataFrame | blocks.Block,
         how: Literal[
             "inner",
             "left",
