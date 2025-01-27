@@ -12,7 +12,7 @@ from bigframes._config import options as config_options
 import bigframes_vendored.pandas.pandas._typing as vendored_pandas_typing
 from bigframes.dataframe import DataFrame, Literal, Sequence
 import bigframes.core.blocks as blocks
-from bigframes.dtypes import is_struct_like
+from bigframes.dtypes import is_struct_like, DtypeString, Dtype
 import bigframes.session
 
 if TYPE_CHECKING:
@@ -70,6 +70,45 @@ class SchemaTracker:
                 node = node.setdefault(part, {})
         return root
 
+
+    @staticmethod
+    def _parse_change(chg_from: str, chg_to: str, sep: str) -> tuple[str, str, bool]:
+        "Tests if two strings representing nested structs are identical on their nests"
+        #TODO: simplify, just compare strings
+        _from = chg_from.split(sep)
+        _to = chg_to.split(sep)
+        if (len(_from) < 1) or (len(_to) < 1):
+            raise NestedDataError("Column name missing")
+        if len(_from) != len(_to):
+            if len(_to) != 1:
+                return tuple((chg_from, chg_to, False)) # type: ignore
+            _chg_to = chg_from.rsplit(sep, 1)[0] + sep + chg_to
+            return tuple((chg_from, _chg_to, True)) # type: ignore
+        equal = sum([val_from==_to[i] for i, val_from in enumerate(_from[0:-1])])==(len(_from)-1)
+        return tuple((chg_from, chg_to, equal)) # type: ignore
+
+    @staticmethod
+    def _parse_change_levels(changes: dict|Mapping, sep: str) -> dict:
+        """
+        Changes must be within the same level/layer of nesting.
+        However, to make things easier for the user, we allow a simplified notation such that the targets/values
+        of the 'changes' dict can just reference the last layer of the keys. Example:
+            person.address.city: location
+        is the same as
+            person.address.city: person.address.location
+        """
+        _valid, _invalid = {}, {}
+        for col_from, col_to in changes.items():
+            ret = SchemaTracker._parse_change(col_from, col_to, sep)
+            el = {ret[0]: ret[1]}
+            if ret[-1]:
+                _valid.update(el)
+            else:
+                _invalid.update(el)
+        if _invalid:
+            raise NestedDataError(f"Invalid column name change operation {ret[0]} -> {ret[1]}")
+        return _valid
+
     @property
     def is_valid(self) -> bool:
         """
@@ -123,7 +162,7 @@ class SchemaTracker:
                 pref = col.rsplit(self.sep_layers, 1)[0]
                 _parent = [p for p in prefixes if pref == p.rsplit(self.sep_layers, 1)[0]]
                 _parent = _parent[0].rstrip(self.sep_layers) if len(_parent) > 0 else parent
-                if bigframes.dtypes.is_struct_like(dtp):
+                if is_struct_like(dtp):
                     nested_col.append(col)
                     prefixes.append(col+self.sep_layers)
                 value = tuple((_parent, dtp))
@@ -133,6 +172,7 @@ class SchemaTracker:
                     continue  # restart after having exploded
             if nested_col:
                 df_flattened = df_flattened.struct.explode(nested_col[0], separator=self.sep_layers)
+                
         # finalize adding non nested columns to schema
         for col, dtp in schema.items():
             if schema_ret.get(col, None) is None:
@@ -167,78 +207,30 @@ class SchemaTracker:
         dag_res = self._init_dag_from_df_schema(dag, schema, layer_separator=layer_separator, struct_separator=struct_separator)
         return dag_res
 
+    def start_lineage(self, df: DataFrame|NestedDataFrame):
+        df_flattened, self.schema = self._explode_nested(df)
+        # add root note to initialize DAG
+        self.dag.add_node(self._base_root_name, node_type=self._base_root_name)
+        self.root = [el for el in topological_sort(self.dag)][0]
+        for key, value in self.schema.items():
+            parent = value[0] if value[0] else self.root
+            self.dag.add_node(key, node_type=self.schema[key])
+            self.dag.add_edge(parent, key)
+        return df_flattened
+
     def to_name_layer(self, col: str) -> str:
         return col.replace(self.sep_structs, self.sep_layers)
 
     def to_name_struct(self, col: str) -> str:
         return col.replace(self.sep_layers, self.sep_structs)
 
-    def merge(self, lineage: SchemaTracker) -> DiGraph:
+    def lineage_merge(self, lineage_other: SchemaTracker) -> DiGraph:
         "merges 'other' lineage into self by adding all its root-successors to self.root"
-        assert( (self.sep_layers == lineage.sep_layers) and (self.sep_structs == lineage.sep_structs))
-        dag_merged = nx_compose(self.dag, lineage.dag)
+        assert( (self.sep_layers == lineage_other.sep_layers) and (self.sep_structs == lineage_other.sep_structs))
+        dag_merged = nx_compose(self.dag, lineage_other.dag)
         return dag_merged
 
-    def add(self, df: DataFrame, layer_separator: str, struct_separator: str):
-        df_flattened, df_schema = self._explode_nested(df, sep_explode=layer_separator, sep_struct=struct_separator)
-        schema = df_flattened.dtypes
-        cols = list(df_flattened.dtypes.keys())
-        node = df_flattened._block.expr.node
-        dag = self.dag_from_df(schema=df_schema, layer_separator=layer_separator, struct_separator=struct_separator)
-        schema_orig: Tuple[SchemaField, ...] = node.physical_schema if hasattr(node, "physical_schema") else None # type: ignore, TODO: drop physical schema for now!
-        source = SchemaSource(node_flattened=node, dag=dag, schema=schema, schema_orig=schema_orig) # type: ignore  # noqa: E999
-        hash_df = bfnode_hash(df._block.expr.node)
-        self._source_handler.add_source(hash_df=hash_df, source = source)
-        return
-
-    def start_lineage(self, df: DataFrame):
-        df_flattened, df_schema = self._explode_nested(df)
-        self.schemata.append(df_schema)
-        # add root note to initialize DAG
-        self.dag.add_node(self._base_root_name, node_type=self._base_root_name)
-        self.root = [el for el in topological_sort(self.dag)][0]
-        for key, value in df_schema.items():
-            parent = value[0] if value[0] else self.root
-            self.dag.add_node(key, node_type=df_schema[key])
-            self.dag.add_edge(parent, key)
-
-    @staticmethod
-    def _parse_change(chg_from: str, chg_to: str, sep: str) -> tuple[str, str, bool]:
-        _from = chg_from.split(sep)
-        _to = chg_to.split(sep)
-        if (len(_from) < 1) or (len(_to) < 1):
-            raise NestedDataError("Column name missing")
-        if len(_from) != len(_to):
-            if len(_to) != 1:
-                return tuple((chg_from, chg_to, False)) # type: ignore
-            _chg_to = chg_from.rsplit(sep, 1)[0] + sep + chg_to
-            return tuple((chg_from, _chg_to, True)) # type: ignore
-        equal = sum([val_from==_to[i] for i, val_from in enumerate(_from[0:-1])])==(len(_from)-1)
-        return tuple((chg_from, chg_to, equal)) # type: ignore
-
-    @staticmethod
-    def _parse_change_levels(changes: dict|Mapping, sep: str) -> dict:
-        """
-        Changes must be within the same level/layer of nesting.
-        However, to make things easier for the user, we allow a simplified notation such that the targets/values
-        of the 'changes' dict can just reference the last layer of the keys. Example:
-            person.address.city: location
-        is the same as
-            person.address.city: person.address.location
-        """
-        _valid, _invalid = {}, {}
-        for col_from, col_to in changes.items():
-            ret = SchemaTracker._parse_change(col_from, col_to, sep)
-            el = {ret[0]: ret[1]}
-            if ret[-1]:
-                _valid.update(el)
-            else:
-                _invalid.update(el)
-        if _invalid:
-            raise NestedDataError(f"Invalid column name change operation {ret[0]} -> {ret[1]}")
-        return _valid
-
-    def extend_dag(self, changes: dict|Mapping):
+    def apply_changes(self, changes: dict|Mapping):
         dag_leaves = set(SchemaTracker.leaves(dag=self.dag)) # type: ignore
         source_leaves = set([self.to_name_layer(col) for col in list(changes.keys())])
         if not source_leaves.issubset(dag_leaves):
@@ -249,21 +241,6 @@ class SchemaTracker:
         for col_source, col_target in changes.items():
             self.dag.add_node(col_target)
             self.dag.add_edge(col_source, col_target)
-        # different implementation
-        source = self._source_handler.get(hdl_child)
-        if source is None:
-            self._add_child(hdl_parent, hdl_child)
-            source = self._source_handler.get(hdl_child)
-            assert(source is not None)
-            #raise NestedDataError("Unknown nested node handel", params=[hdl.__qualname__])
-        dag_leaves = set(self._source_handler.leaves(dag=source.dag))
-        source_leaves = set([self._to_name_layer(col) for col in list(changes.keys())])
-        if not source_leaves.issubset(dag_leaves):
-            invalid_cols = [self._to_name_layer(col) for col in source_leaves if col not in dag_leaves]
-            raise NestedDataError("Invalid columns/ Columns not in schema", params=invalid_cols)
-        _changes = SchemaTrackingContextManager._parse_change_levels(changes, self.sep_structs)
-        _changes = {self._to_name_layer(_from): self._to_name_layer(_to) for _from, _to in _changes.items()}
-        source.extend_dag(_changes)
 
     def get_leaves_at_level(self, level: str) -> list[str]:
         """
@@ -292,36 +269,11 @@ class SchemaTracker:
                     queue.append((child, node_level + 1, node_path + "__" + child))
         return leaves
 
-    @property
-    def num_nested_commands(self) -> int:
-        return self._op_count
-
-    def prev_changes(self) -> tuple[nodes.BigFrameNode, dict|Mapping]:
-        return ((self._calling_node, self._latest_op)) # type: ignore
-
-    def latest_changes(self) -> list:
-        return [self._calling_node, self._latest_op, self._op_count]
-
     # Private helper methods for starting schema deduction and DAG creation
     @staticmethod
     def _has_nested_data(schema: list) -> bool:
         return sum([1 for x in schema if x.field_type == "RECORD"]) > 0
         
-# Work In Progress
-
-    def step(self):  #nodes.BigFrameNode):
-        hdl = None
-        if hash_start:
-            hdl = self._source_handler.sources.get(hash_parent, None)
-            if hdl is None:
-                raise ValueError(f"NestedDataCM: Unknown data source {self._block_start}")
-            
-        # no join, merge etc., no new source/BigFrameNode
-        else:
-            if not self._schemata_matching(self._block_start, hdl):
-                raise Exception("Internal error: Nested Schema mismatch")
-                self._extend_dag(hdl, self._block_end.expr.node)
-
 
 
 class NestedDataFrame(DataFrame):
@@ -335,12 +287,14 @@ class NestedDataFrame(DataFrame):
     #         return result
     #     return wrapper
                    
-    def _init_(self, data=None, index: vendored_pandas_typing.Axes | None = None,
-        columns: vendored_pandas_typing.Axes | None = None, dtype: bigframes.dtypes.DtypeString | bigframes.dtypes.Dtype | None = None,
+    def _init_(self, data: DataFrame|NestedDataFrame|None=None, index: vendored_pandas_typing.Axes | None = None,
+        columns: vendored_pandas_typing.Axes | None = None, dtype: DtypeString | Dtype | None = None,
         copy: bool | None= None, session: bigframes.session.Session | None = None):
 
-        DataFrame.__init__(self, index=index, columns=columns, dtype=dtype, copy=copy, session=session)
         self.lineage = SchemaTracker()
+        if data is not None:
+            self.df_unnested = self.lineage.start_lineage(data) # type: ignore
+        DataFrame.__init__(self, data=self.df_unnested, index=index, columns=columns, dtype=dtype, copy=copy, session=session)
 
     def _unroll_columns(self, cols: Sequence[blocks.Label|str] | blocks.Label | str) -> list[str]:
         cols = [str(cols)] if not isinstance(cols, Iterable) else [str(col) for col in cols]
@@ -367,10 +321,10 @@ class NestedDataFrame(DataFrame):
         Rename is special in the context of nested data, as we allow column name changes for struct columns!
         Thus we cannot just call it but have to forward it to the context manager via the add_changes method
         """
-        self.lineage.add_changes(NestedDataFrame.rename.__qualname__, columns, fct=DataFrame.rename)
+        self.lineage.apply_changes(columns)
         return super().rename(columns=columns)
 
-    def merge(self, right: "NestedDataFrame|DataFrame",
+    def merge(self, right: NestedDataFrame|DataFrame,
                 how: Literal["inner", "left", "outer", "right", "cross"] = "inner", *,
             # TODO(garrettwu): Currently can take inner, outer, left and right. To support
             # cross joins
@@ -384,11 +338,15 @@ class NestedDataFrame(DataFrame):
         _on = self._unroll_columns(on)
         _left_on = self._unroll_columns(left_on)
         _right_on = self._unroll_columns(right_on)
-        # ensure all leaves are valid columns
+        # ensure all leaves are valid column
+        assert isinstance(right, (NestedDataFrame, DataFrame))
         assert(set(_left_on).issubset(self.columns))
         assert(set(_right_on).issubset(right.columns))
         assert(set(_on).issubset(self.columns) and set(_on).issubset(right.columns))
+        #TODO: handle lineage for right=DataFrame
+        self.lineage.lineage_merge(right.lineage)
         df_ret = super().merge(right=right, on=_on, left_on=_left_on, right_on=_right_on, how=how, sort=sort, suffixes=suffixes)
+        
         
         #df_unrolled = super().merge(rirhg, )
         
