@@ -25,7 +25,7 @@ import jellyfish
 
 import bigframes.constants
 import bigframes.enums
-import bigframes.exceptions
+import bigframes.exceptions as bfe
 
 SESSION_STARTED_MESSAGE = (
     "Cannot change '{attribute}' once a session has started. "
@@ -55,15 +55,12 @@ def _get_validated_location(value: Optional[str]) -> Optional[str]:
         bigframes.constants.ALL_BIGQUERY_LOCATIONS,
         key=lambda item: jellyfish.levenshtein_distance(location, item),
     )
-    warnings.warn(
-        UNKNOWN_LOCATION_MESSAGE.format(location=location, possibility=possibility),
-        # There are many layers before we get to (possibly) the user's code:
-        # -> bpd.options.bigquery.location = "us-central-1"
-        # -> location.setter
-        # -> _get_validated_location
-        stacklevel=3,
-        category=bigframes.exceptions.UnknownLocationWarning,
-    )
+    # There are many layers before we get to (possibly) the user's code:
+    # -> bpd.options.bigquery.location = "us-central-1"
+    # -> location.setter
+    # -> _get_validated_location
+    msg = UNKNOWN_LOCATION_MESSAGE.format(location=location, possibility=possibility)
+    warnings.warn(msg, stacklevel=3, category=bfe.UnknownLocationWarning)
 
     return value
 
@@ -91,6 +88,7 @@ class BigQueryOptions:
         skip_bq_connection_check: bool = False,
         *,
         ordering_mode: Literal["strict", "partial"] = "strict",
+        client_endpoints_override: Optional[dict] = None,
     ):
         self._credentials = credentials
         self._project = project
@@ -103,6 +101,11 @@ class BigQueryOptions:
         self._session_started = False
         # Determines the ordering strictness for the session.
         self._ordering_mode = _validate_ordering_mode(ordering_mode)
+
+        if client_endpoints_override is None:
+            client_endpoints_override = {}
+
+        self._client_endpoints_override = client_endpoints_override
 
     @property
     def application_name(self) -> Optional[str]:
@@ -269,10 +272,11 @@ class BigQueryOptions:
             )
 
         if value:
-            warnings.warn(
+            msg = (
                 "Use of regional endpoints is a feature in preview and "
                 "available only in selected regions and projects. "
             )
+            warnings.warn(msg, category=bfe.PreviewWarning, stacklevel=2)
 
         self._use_regional_endpoints = value
 
@@ -315,5 +319,29 @@ class BigQueryOptions:
         return self._ordering_mode.value
 
     @ordering_mode.setter
-    def ordering_mode(self, ordering_mode: Literal["strict", "partial"]) -> None:
-        self._ordering_mode = _validate_ordering_mode(ordering_mode)
+    def ordering_mode(self, value: Literal["strict", "partial"]) -> None:
+        ordering_mode = _validate_ordering_mode(value)
+        if self._session_started and self._ordering_mode != ordering_mode:
+            raise ValueError(SESSION_STARTED_MESSAGE.format(attribute="ordering_mode"))
+        self._ordering_mode = ordering_mode
+
+    @property
+    def client_endpoints_override(self) -> dict:
+        """Option that sets the BQ client endpoints addresses directly as a dict. Possible keys are "bqclient", "bqconnectionclient", "bqstoragereadclient"."""
+        return self._client_endpoints_override
+
+    @client_endpoints_override.setter
+    def client_endpoints_override(self, value: dict):
+        msg = (
+            "This is an advanced configuration option for directly setting endpoints. "
+            "Incorrect use may lead to unexpected behavior or system instability. "
+            "Proceed only if you fully understand its implications."
+        )
+        warnings.warn(msg)
+
+        if self._session_started and self._client_endpoints_override != value:
+            raise ValueError(
+                SESSION_STARTED_MESSAGE.format(attribute="client_endpoints_override")
+            )
+
+        self._client_endpoints_override = value

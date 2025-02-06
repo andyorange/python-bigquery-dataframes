@@ -22,10 +22,10 @@ from typing import List, Literal, Optional, Union
 import bigframes_vendored.sklearn.decomposition._pca
 from google.cloud import bigquery
 
-import bigframes
 from bigframes.core import log_adapter
 from bigframes.ml import base, core, globals, utils
 import bigframes.pandas as bpd
+import bigframes.session
 
 _BQML_PARAMS_MAPPING = {"svd_solver": "pcaSolver"}
 
@@ -49,7 +49,9 @@ class PCA(
         self._bqml_model_factory = globals.bqml_model_factory()
 
     @classmethod
-    def _from_bq(cls, session: bigframes.Session, bq_model: bigquery.Model) -> PCA:
+    def _from_bq(
+        cls, session: bigframes.session.Session, bq_model: bigquery.Model
+    ) -> PCA:
         assert bq_model.model_type == "PCA"
 
         kwargs = utils.retrieve_params_from_bq_model(
@@ -88,7 +90,7 @@ class PCA(
         y=None,
         transforms: Optional[List[str]] = None,
     ) -> PCA:
-        (X,) = utils.convert_to_dataframe(X)
+        (X,) = utils.batch_convert_to_dataframe(X)
 
         # To mimic sklearn's behavior
         if self.n_components is None:
@@ -133,7 +135,7 @@ class PCA(
         if not self._bqml_model:
             raise RuntimeError("A model must be fitted before predict")
 
-        (X,) = utils.convert_to_dataframe(X, session=self._bqml_model.session)
+        (X,) = utils.batch_convert_to_dataframe(X, session=self._bqml_model.session)
 
         return self._bqml_model.predict(X)
 
@@ -162,7 +164,7 @@ class PCA(
         if not self._bqml_model:
             raise RuntimeError("A model must be fitted before detect_anomalies")
 
-        (X,) = utils.convert_to_dataframe(X, session=self._bqml_model.session)
+        (X,) = utils.batch_convert_to_dataframe(X, session=self._bqml_model.session)
 
         return self._bqml_model.detect_anomalies(
             X, options={"contamination": contamination}

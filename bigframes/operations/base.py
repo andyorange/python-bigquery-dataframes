@@ -88,7 +88,8 @@ class SeriesMethods:
                 if name is not None:
                     data.name = name
                 if dtype is not None:
-                    data = data.astype(dtype)
+                    bf_dtype = bigframes.dtypes.bigframes_type(dtype)
+                    data = data.astype(bf_dtype)
             else:  # local dict-like data
                 data = read_pandas_func(pd.Series(data, name=name, dtype=dtype))  # type: ignore
             data_block = data._block
@@ -174,7 +175,7 @@ class SeriesMethods:
         reverse: bool = False,
     ) -> series.Series:
         """Applies a binary operator to the series and other."""
-        if bigframes.core.convert.is_series_convertible(other):
+        if bigframes.core.convert.can_convert_to_series(other):
             self_index = indexes.Index(self._block)
             other_series = bigframes.core.convert.to_bf_series(
                 other, self_index, self._block.session

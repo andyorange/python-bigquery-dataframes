@@ -9,17 +9,17 @@ from functools import reduce
 import operator
 from typing import Any, TYPE_CHECKING
 
-from ibis.common.annotations import attribute
-from ibis.common.collections import FrozenDict  # noqa: TCH001
-from ibis.common.deferred import var
-import ibis.common.exceptions as com
-from ibis.common.graph import Graph
-from ibis.common.patterns import InstanceOf, Object, Pattern, replace
-from ibis.common.typing import VarTuple  # noqa: TCH001
-import ibis.expr.datatypes as dt
-import ibis.expr.operations as ops
-from ibis.expr.rewrites import d, p, replace_parameter
-from ibis.expr.schema import Schema
+from bigframes_vendored.ibis.common.annotations import attribute
+from bigframes_vendored.ibis.common.collections import FrozenDict  # noqa: TCH001
+from bigframes_vendored.ibis.common.deferred import var
+import bigframes_vendored.ibis.common.exceptions as ibis_exceptions
+from bigframes_vendored.ibis.common.graph import Graph
+from bigframes_vendored.ibis.common.patterns import InstanceOf, Object, Pattern, replace
+from bigframes_vendored.ibis.common.typing import VarTuple  # noqa: TCH001
+import bigframes_vendored.ibis.expr.datatypes as dt
+import bigframes_vendored.ibis.expr.operations as ops
+from bigframes_vendored.ibis.expr.rewrites import d, p, replace_parameter
+from bigframes_vendored.ibis.expr.schema import Schema
 from public import public
 import toolz
 
@@ -198,7 +198,7 @@ if hasattr(p, "DropNull"):
 def first_to_firstvalue(_, **kwargs):
     """Convert a First or Last node to a FirstValue or LastValue node."""
     if _.func.where is not None:
-        raise com.UnsupportedOperationError(
+        raise ibis_exceptions.UnsupportedOperationError(
             f"`{type(_.func).__name__.lower()}` with `where` is unsupported "
             "in a window function"
         )
@@ -245,6 +245,8 @@ def merge_select_select(_, **kwargs):
         ops.InSubquery,
         ops.Unnest,
         ops.Impure,
+        # This is used for remote functions, which we don't want to copy
+        ops.ScalarUDF,
     )
     if _.find_below(blocking, filter=ops.Value):
         return _
@@ -400,25 +402,26 @@ def rewrite_empty_order_by_window(_, **kwargs):
     return _.copy(order_by=(ops.NULL,))
 
 
-@replace(p.WindowFunction(p.RowNumber | p.NTile))
+@replace(p.WindowFunction(p.RowNumber | p.NTile | p.MinRank | p.DenseRank))
 def exclude_unsupported_window_frame_from_row_number(_, **kwargs):
-    return ops.Subtract(_.copy(start=None, end=0), 1)
-
-
-@replace(p.WindowFunction(p.MinRank | p.DenseRank, start=None))
-def exclude_unsupported_window_frame_from_rank(_, **kwargs):
+    # These functions do not support window bounds, only an ordering.
+    # Also, its kind of messy to insert subtract here, should probably be in visitor
     return ops.Subtract(
-        _.copy(start=None, end=0, order_by=_.order_by or (ops.NULL,)), 1
+        _.copy(how="none", start=None, end=None, order_by=_.order_by or (ops.NULL,)), 1
     )
 
 
-@replace(
-    p.WindowFunction(
-        p.Lag | p.Lead | p.PercentRank | p.CumeDist | p.Any | p.All, start=None
-    )
-)
+@replace(p.WindowFunction(p.PercentRank | p.CumeDist, start=None))
+def exclude_unsupported_window_frame_from_rank(_, **kwargs):
+    # These functions do not support window bounds, only an ordering.
+    # Also, its kind of messy to insert subtract here, should probably be in visitor
+    return _.copy(how="none", start=None, end=None, order_by=_.order_by or (ops.NULL,))
+
+
+@replace(p.WindowFunction(p.Lag | p.Lead, start=None))
 def exclude_unsupported_window_frame_from_ops(_, **kwargs):
-    return _.copy(start=None, end=0, order_by=_.order_by or (ops.NULL,))
+    # lag/lead dont' support bounds, but do support ordering
+    return _.copy(how="none", start=None, end=None, order_by=_.order_by or (ops.NULL,))
 
 
 # Rewrite rules for lowering a high-level operation into one composed of more
@@ -510,7 +513,7 @@ def lower_sample(_, **kwargs):
     Errors as unsupported if a `seed` is specified.
     """
     if _.seed is not None:
-        raise com.UnsupportedOperationError(
+        raise ibis_exceptions.UnsupportedOperationError(
             "`Table.sample` with a random seed is unsupported"
         )
     return ops.Filter(_.parent, (ops.LessEqual(ops.RandomScalar(), _.fraction),))

@@ -1,4 +1,4 @@
-# Contains code from https://github.com/ibis-project/ibis/blob/main/ibis/backends/sql/compilers/base.py
+# Contains code from https://github.com/ibis-project/ibis/blob/9.2.0/ibis/backends/sql/compilers/base.py
 
 from __future__ import annotations
 
@@ -23,13 +23,13 @@ from bigframes_vendored.ibis.backends.sql.rewrites import (
     one_to_zero_index,
     sqlize,
 )
+import bigframes_vendored.ibis.common.exceptions as ibis_exceptions
+import bigframes_vendored.ibis.common.patterns as pats
+from bigframes_vendored.ibis.config import options
+import bigframes_vendored.ibis.expr.datatypes as dt
+import bigframes_vendored.ibis.expr.operations as ops
+from bigframes_vendored.ibis.expr.operations.udf import InputType
 from bigframes_vendored.ibis.expr.rewrites import lower_stringslice
-import ibis.common.exceptions as com
-import ibis.common.patterns as pats
-from ibis.config import options
-import ibis.expr.datatypes as dt
-import ibis.expr.operations as ops
-from ibis.expr.operations.udf import InputType
 from public import public
 import sqlglot as sg
 import sqlglot.expressions as sge
@@ -48,8 +48,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
     from bigframes_vendored.ibis.backends.bigquery.datatypes import SqlglotType
-    import ibis.expr.schema as sch
-    import ibis.expr.types as ir
+    import bigframes_vendored.ibis.expr.schema as sch
+    import bigframes_vendored.ibis.expr.types as ir
 
 
 def get_leaf_classes(op):
@@ -134,7 +134,7 @@ class AggGen:
         func = compiler.f[name]
 
         if order_by and not self.supports_order_by:
-            raise com.UnsupportedOperationError(
+            raise ibis_exceptions.UnsupportedOperationError(
                 "ordering of order-sensitive aggregations via `order_by` is "
                 f"not supported for the {compiler.dialect} backend"
             )
@@ -432,7 +432,7 @@ class SQLGlotCompiler(abc.ABC):
         ops.IntervalSubtract,
     )
 
-    NEEDS_PARENS = BINARY_INFIX_OPS + (ops.IsNull,)
+    NEEDS_PARENS = BINARY_INFIX_OPS + (ops.IsNull, ops.NotNull)
 
     # Constructed dynamically in `__init_subclass__` from their respective
     # UPPERCASE values to handle inheritance, do not modify directly here.
@@ -558,12 +558,12 @@ class SQLGlotCompiler(abc.ABC):
         limit: str | None = None,
         params: Mapping[ir.Expr, Any] | None = None,
     ):
-        import ibis
+        import bigframes_vendored.ibis
 
         table_expr = expr.as_table()
 
         if limit == "default":
-            limit = ibis.options.sql.default_limit
+            limit = bigframes_vendored.ibis.options.sql.default_limit
         if limit is not None:
             table_expr = table_expr.limit(limit)
 
@@ -665,7 +665,7 @@ class SQLGlotCompiler(abc.ABC):
             if method is not None:
                 return method(op, **kwargs)
             else:
-                raise com.OperationNotDefinedError(
+                raise ibis_exceptions.OperationNotDefinedError(
                     f"No translation rule for {type(op).__name__}"
                 )
 
@@ -708,7 +708,7 @@ class SQLGlotCompiler(abc.ABC):
         if value is None:
             if dtype.nullable:
                 return NULL if dtype.is_null() else self.cast(NULL, dtype)
-            raise com.UnsupportedOperationError(
+            raise ibis_exceptions.UnsupportedOperationError(
                 f"Unsupported NULL for non-nullable type: {dtype!r}"
             )
         else:
@@ -938,7 +938,7 @@ class SQLGlotCompiler(abc.ABC):
         }
 
         if (raw_unit := unit_mapping.get(unit.short)) is None:
-            raise com.UnsupportedOperationError(
+            raise ibis_exceptions.UnsupportedOperationError(
                 f"Unsupported truncate unit {unit.short!r}"
             )
 
@@ -980,7 +980,7 @@ class SQLGlotCompiler(abc.ABC):
 
     def visit_Substring(self, op, *, arg, start, length):
         if isinstance(op.length, ops.Literal) and (value := op.length.value) < 0:
-            raise com.IbisInputError(
+            raise ibis_exceptions.IbisInputError(
                 f"Length parameter must be a non-negative value; got {value}"
             )
         start += 1
@@ -991,7 +991,7 @@ class SQLGlotCompiler(abc.ABC):
 
     def visit_StringFind(self, op, *, arg, substr, start, end):
         if end is not None:
-            raise com.UnsupportedOperationError(
+            raise ibis_exceptions.UnsupportedOperationError(
                 "String find doesn't support `end` argument"
             )
 
@@ -1022,7 +1022,7 @@ class SQLGlotCompiler(abc.ABC):
         return arg.is_(NULL)
 
     def visit_NotNull(self, op, *, arg):
-        return arg.is_(sg.not_(NULL, copy=False))
+        return self._add_parens(op, arg).is_(sg.not_(NULL, copy=False))
 
     def visit_InValues(self, op, *, value, options):
         return value.isin(*options)
@@ -1088,6 +1088,13 @@ class SQLGlotCompiler(abc.ABC):
         )
 
     visit_SearchedCase = visit_SimpleCase
+
+    def visit_SqlScalar(self, op, *, sql_template, values, output_type):
+        # TODO: can we include a string in the sqlglot expression without parsing?
+        return sg.parse_one(
+            sql_template.format(*[value.sql(dialect="bigquery") for value in values]),
+            dialect="bigquery",
+        )
 
     def visit_ExistsSubquery(self, op, *, rel):
         select = rel.this.select(1, append=False)
@@ -1599,12 +1606,12 @@ class SQLGlotCompiler(abc.ABC):
         return sge.BitwiseXor(this=left, expression=right)
 
     def visit_Undefined(self, op, **_):
-        raise com.OperationNotDefinedError(
+        raise ibis_exceptions.OperationNotDefinedError(
             f"Compilation rule for {type(op).__name__!r} operation is not defined"
         )
 
     def visit_Unsupported(self, op, **_):
-        raise com.UnsupportedOperationError(
+        raise ibis_exceptions.UnsupportedOperationError(
             f"{type(op).__name__!r} operation is not supported in the {self.dialect} backend"
         )
 

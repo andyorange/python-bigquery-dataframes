@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import typing
-from typing import Hashable, Optional, Sequence, Union
+from typing import Hashable, Literal, Optional, Sequence, Union
 
 import bigframes_vendored.constants as constants
 import bigframes_vendored.pandas.core.indexes.base as vendored_pandas_index
@@ -78,7 +78,8 @@ class Index(vendored_pandas_index.Index):
             if name is not None:
                 index.name = name
             if dtype is not None:
-                index = index.astype(dtype)
+                bf_dtype = bigframes.dtypes.bigframes_type(dtype)
+                index = index.astype(bf_dtype)
             block = index._block
         elif isinstance(data, pandas.Index):
             pd_df = pandas.DataFrame(index=data)
@@ -134,7 +135,6 @@ class Index(vendored_pandas_index.Index):
 
     @property
     def names(self) -> typing.Sequence[blocks.Label]:
-        """Returns the names of the Index."""
         return self._block._index_labels
 
     @names.setter
@@ -175,7 +175,6 @@ class Index(vendored_pandas_index.Index):
 
     @property
     def size(self) -> int:
-        """Returns the size of the Index."""
         return self.shape[0]
 
     @property
@@ -186,12 +185,6 @@ class Index(vendored_pandas_index.Index):
     @property
     @validations.requires_ordering()
     def is_monotonic_increasing(self) -> bool:
-        """
-        Return a boolean if the values are equal or increasing.
-
-        Returns:
-            bool
-        """
         return typing.cast(
             bool,
             self._block.is_monotonic_increasing(self._block.index_columns),
@@ -200,12 +193,7 @@ class Index(vendored_pandas_index.Index):
     @property
     @validations.requires_ordering()
     def is_monotonic_decreasing(self) -> bool:
-        """
-        Return a boolean if the values are equal or decreasing.
 
-        Returns:
-            bool
-        """
         return typing.cast(
             bool,
             self._block.is_monotonic_decreasing(self._block.index_columns),
@@ -323,12 +311,19 @@ class Index(vendored_pandas_index.Index):
 
     def astype(
         self,
-        dtype: Union[bigframes.dtypes.DtypeString, bigframes.dtypes.Dtype],
+        dtype,
+        *,
+        errors: Literal["raise", "null"] = "raise",
     ) -> Index:
+        if errors not in ["raise", "null"]:
+            raise ValueError("Argument 'errors' must be one of 'raise' or 'null'")
         if self.nlevels > 1:
             raise TypeError("Multiindex does not support 'astype'")
+        dtype = bigframes.dtypes.bigframes_type(dtype)
         return self._apply_unary_expr(
-            ops.AsTypeOp(to_type=dtype).as_expr(ex.free_var("arg"))
+            ops.AsTypeOp(to_type=dtype, safe=(errors == "null")).as_expr(
+                ex.free_var("arg")
+            )
         )
 
     def all(self) -> bool:

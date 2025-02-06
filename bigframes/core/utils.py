@@ -11,13 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 import re
 import typing
 from typing import Hashable, Iterable, List
+import warnings
 
 import bigframes_vendored.pandas.io.common as vendored_pandas_io_common
 import pandas as pd
+import pandas.api.types as pdtypes
 import typing_extensions
+
+import bigframes.exceptions as bfe
 
 UNNAMED_COLUMN_ID = "bigframes_unnamed_column"
 UNNAMED_INDEX_ID = "bigframes_unnamed_index"
@@ -164,3 +169,45 @@ def merge_column_labels(
             result_labels.append(col_label)
 
     return pd.Index(result_labels)
+
+
+def preview(*, name: str):
+    """Decorate to warn of a preview API."""
+
+    def decorator(func):
+        msg = f"{name} is in preview. Its behavior may change in future versions."
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            warnings.warn(msg, category=bfe.PreviewWarning)
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def timedelta_to_micros(td: pd.Timedelta) -> int:
+    # td.value returns total nanoseconds.
+    return td.value // 1000
+
+
+def replace_timedeltas_with_micros(dataframe: pd.DataFrame) -> List[str]:
+    """
+    Replaces in-place timedeltas to integer values in microseconds. Nanosecond part is ignored.
+
+    Returns:
+        The names of updated columns
+    """
+    updated_columns = []
+
+    for col in dataframe.columns:
+        if pdtypes.is_timedelta64_dtype(dataframe[col].dtype):
+            dataframe[col] = dataframe[col].apply(timedelta_to_micros)
+            updated_columns.append(col)
+
+    if pdtypes.is_timedelta64_dtype(dataframe.index.dtype):
+        dataframe.index = dataframe.index.map(timedelta_to_micros)
+        updated_columns.append(dataframe.index.name)
+
+    return updated_columns
