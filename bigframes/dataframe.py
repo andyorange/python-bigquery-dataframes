@@ -599,13 +599,14 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         # https://github.com/googleapis/python-bigquery-dataframes/issues/728
         # and
         # https://nedbatchelder.com/blog/201010/surprising_getattr_recursion.html
-        if key == "_block":
-            raise AttributeError("_block")
+        if key.startswith("-"): #key == "_block":
+            raise AttributeError(key)
 
         if key in self._block.column_labels:
             return self.__getitem__(key)
 
         if hasattr(pandas.DataFrame, key):
+        #if hasattr(self, key):
             raise AttributeError(
                 textwrap.dedent(
                     f"""
@@ -617,7 +618,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         raise AttributeError(key)
 
     def __setattr__(self, key: str, value):
-        if key in ["_block", "_query_job"]:
+        if key.startswith("-"): #key in ["_block", "_query_job"]:
             object.__setattr__(self, key, value)
             return
         # Can this be removed???

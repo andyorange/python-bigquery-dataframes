@@ -291,7 +291,7 @@ class NestedDataFrame(DataFrame):
         columns: vendored_pandas_typing.Axes | None = None, dtype: DtypeString | Dtype | None = None,
         copy: bool | None= None, session: bigframes.session.Session | None = None):
 
-        self.lineage = SchemaTracker()
+        self._lineage = SchemaTracker()
         if data is not None:
             self.df_unnested = self.lineage.start_lineage(data) # type: ignore
         DataFrame.__init__(self, data=self.df_unnested, index=index, columns=columns, dtype=dtype, copy=copy, session=session)
@@ -333,8 +333,7 @@ class NestedDataFrame(DataFrame):
             right_on: blocks.Label | str | Sequence[blocks.Label|str] | None = None,
             sort: bool = False,
             suffixes: tuple[str, str] = ("_x", "_y")
-        ) -> Self:
-
+        ) -> NestedDataFrame:
         _on = self._unroll_columns(on)
         _left_on = self._unroll_columns(left_on)
         _right_on = self._unroll_columns(right_on)
@@ -344,13 +343,11 @@ class NestedDataFrame(DataFrame):
         assert(set(_right_on).issubset(right.columns))
         assert(set(_on).issubset(self.columns) and set(_on).issubset(right.columns))
         #TODO: handle lineage for right=DataFrame
-        self.lineage.lineage_merge(right.lineage)
-        df_ret = super().merge(right=right, on=_on, left_on=_left_on, right_on=_right_on, how=how, sort=sort, suffixes=suffixes)
-        
-        
-        #df_unrolled = super().merge(rirhg, )
-        
-        return self
+        _right = NestedDataFrame(data=right) if not isinstance(right, NestedDataFrame) else right
+        merged = super().merge(right=right, on=_on, left_on=_left_on, right_on=_right_on, how=how, sort=sort, suffixes=suffixes)
+        ret = NestedDataFrame(data=merged)
+        ret.lineage.lineage_merge(_right.lineage)
+        return ret
 
 # to guarantee singleton creation, we prohibit inheritnig from the class
 #nested_data_context_manager: SchemaTrackingContextManager = schema_tracking_factory()

@@ -22,9 +22,8 @@
 import bigframes.pandas as bfpd
 import bigframes.core as core
 from bigframes.core.schema_tracking import set_project
-from bigframes.core.nested_context import NestedDataError
 from bigframes.dataframe import DataFrame #nested_data_context_manager
-from bigframes.nesteddataframe import Tbase
+from bigframes.nesteddataframe import NestedDataError, NestedDataFrame
 #from bigframes.core.nodes import NestedDataContextManager
 #from bigframes.core import Session
 
@@ -105,18 +104,46 @@ def create_complex_nested(create: bool) -> DataFrame:
         complex_df.to_gbq("andreas_beschorner.nested_complex")
     return complex_df
 
+def create_complex_nested2(create: bool) -> DataFrame:
+    import pyarrow as pa
+    import pandas as pd
+
+    nested_struct_schema = pa.struct([
+        pa.field("city", pa.string()),
+        pa.field("country", pa.string())
+    ])
+    complex_struct_schema = pa.struct([
+        pa.field("name", pa.string()),
+        pa.field("age", pa.int64()),
+        pa.field("address", nested_struct_schema)
+    ])
+    complex_data = [
+        {"name": "Marlice", "age": 30, "address": {"city": "Bentona", "country": "ES"}},
+        {"name": "Huego", "age": 47, "address": {"city": "Berlin", "country": "DE"}}
+    ]
+    complex_df = bfpd.DataFrame({
+        "id": pd.Series([1, 2]),
+        "person": pd.Series(
+            complex_data,
+            dtype=pd.ArrowDtype(complex_struct_schema),
+        ),
+    }, index=[0, 1])
+
+    if create:
+        complex_df.to_gbq("andreas_beschorner.nested_complex")
+    return complex_df
+
 if __name__ == "__main__":
     #TODO: autodetect if bfpd is already setup and copy proj/loc if availabe
     set_project(project="vf-de-ca-lab", location="europe-west3")
     table="andreas_beschorner.nested_dbg"
     table = "andreas_beschorner.nested_complex" # table="andreas_beschorner.nested_tiny"
-    #dfp = create_simple_nested(True)
+    df1 = create_simple_nested(False)
+    df2 = create_complex_nested2(False)
+    dfn1 = NestedDataFrame(data=df1)
+    dfn2 = NestedDataFrame(data=df2)
+    dfn_merged = dfn1.merge(right=dfn2, on=["age"], how="inner")
 
-    dfg = Tbase()  #DataFrameGuard()
-    dfg.tgetter("Blub", [17, 24])
-    dfg.tsetter("Bla", [1, 3, -2])
-    print(dfg.nage)
-    
     # with nested_data_context_manager as ncm:
     #     #df = bfpd.read_gbq(f"SELECT * FROM {table} limit 10")
     #     #ncm.add_df(df)
