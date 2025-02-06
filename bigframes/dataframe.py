@@ -52,6 +52,8 @@ import bigframes._config.display_options as display_options
 import bigframes.constants
 import bigframes.core
 from bigframes.core import log_adapter
+from bigframes.dtypes import is_object_like, bigframes_type
+from bigframes.series import Series as BF_Series
 import bigframes.core.block_transforms as block_ops
 import bigframes.core.blocks as blocks
 import bigframes.core.convert
@@ -75,7 +77,6 @@ import bigframes.operations.aggregations as agg_ops
 import bigframes.operations.plotting as plotting
 import bigframes.operations.semantics
 import bigframes.operations.structs
-import bigframes.series
 import bigframes.session._io.bigquery
 
 
@@ -84,7 +85,7 @@ if typing.TYPE_CHECKING:
 
     import bigframes.session
 
-    SingleItemValue = Union[bigframes.series.Series, int, float, Callable]
+    SingleItemValue = Union[BF_Series, int, float, Callable]
 
 LevelType = typing.Hashable
 LevelsType = typing.Union[LevelType, typing.Sequence[LevelType]]
@@ -117,7 +118,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         *,
         session: typing.Optional[bigframes.session.Session] = None,
     ):
-        global bigframes  #TODO (abeschorner): This is a complete NoGo, having ALL of bigframes in the DataFrame class. And it calls for circular dependencies.
+        #global bigframes  #TODO (abeschorner): This is a complete NoGo, having ALL of bigframes in the DataFrame class. And it calls for circular dependencies.
 
         self._query_job: Optional[bigquery.QueryJob] = None
 
@@ -127,7 +128,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             )
         # Ignore object dtype if provided, as it provides no additional
         # information about what BigQuery type to use.
-        if dtype is not None and bigframes.dtypes.is_object_like(dtype):
+        if dtype is not None and is_object_like(dtype):
             dtype = None
 
         # Check to see if constructing from BigQuery-backed objects before
@@ -144,11 +145,11 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             utils.is_dict_like(data)
             and len(data) >= 1
             and any(
-                isinstance(data[key], bigframes.series.Series) for key in data.keys()
+                isinstance(data[key], BF_Series) for key in data.keys()
             )
         ):
             if not all(
-                isinstance(data[key], bigframes.series.Series) for key in data.keys()
+                isinstance(data[key], BF_Series) for key in data.keys()
             ):
                 # TODO(tbergeron): Support local list/series data by converting to memtable.
                 raise NotImplementedError(
@@ -157,13 +158,13 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             keys = list(data.keys())
             first_label, first_series = keys[0], data[keys[0]]
             block = (
-                typing.cast(bigframes.series.Series, first_series)
+                typing.cast(BF_Series, first_series)
                 ._get_block()
                 .with_column_labels([first_label])
             )
 
             for key in keys[1:]:
-                other = typing.cast(bigframes.series.Series, data[key])
+                other = typing.cast(BF_Series, data[key])
                 other_block = other._block.with_column_labels([key])
                 # Pandas will keep original sorting if all indices are aligned.
                 # We cannot detect this easily however, and so always sort on index
@@ -183,7 +184,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             if columns:
                 block = block.select_columns(list(columns))  # type:ignore
             if dtype:
-                bf_dtype = bigframes.dtypes.bigframes_type(dtype)
+                bf_dtype = bigframes_type(dtype)
                 block = block.multi_apply_unary_op(ops.AsTypeOp(to_type=bf_dtype))
 
         else: #TODO (abeschorner): ??
@@ -557,13 +558,13 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             Sequence[blocks.Label],
             # Index of column labels can be treated the same as a sequence of column labels.
             pandas.Index,
-            bigframes.series.Series,
+            BF_Series,
         ],
     ):  # No return type annotations (like pandas) as type cannot always be determined statically
         # NOTE: This implements the operations described in
         # https://pandas.pydata.org/docs/getting_started/intro_tutorials/03_subset_data.html
 
-        if isinstance(key, bigframes.series.Series):
+        if isinstance(key, BF_Series):
             return self._getitem_bool_series(key)
 
         if isinstance(key, typing.Hashable):
@@ -610,11 +611,11 @@ class DataFrame(vendored_pandas_frame.DataFrame):
                 return DataFrame(block)
 
         if len(col_ids) == 1:
-            return bigframes.series.Series(block)
+            return BF_Series(block)
         return DataFrame(block)
 
     # Bool Series selects rows
-    def _getitem_bool_series(self, key: bigframes.series.Series) -> DataFrame:
+    def _getitem_bool_series(self, key: BF_Series) -> DataFrame:
         if not key.dtype == pandas.BooleanDtype():
             raise NotImplementedError(
                 f"Only boolean series currently supported for indexing. {constants.FEEDBACK_LINK}"
@@ -829,7 +830,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def _apply_binop(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         op,
         axis: str | int = "columns",
         how: str = "outer",
@@ -899,7 +900,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         # If we already know the transposed schema (from the transpose cache), we don't need to materialize rows from other
         # Instead, can fully defer execution (as a cross-join)
         if (
-            isinstance(other, bigframes.series.Series)
+            isinstance(other, BF_Series)
             and other._block._transpose_cache is not None
         ):
             aligned_block, columns, expr_pairs = self._block._align_series_block_axis_1(
@@ -986,7 +987,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def add(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         # TODO(swast): Support fill_value parameter.
@@ -995,7 +996,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def radd(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         # TODO(swast): Support fill_value parameter.
@@ -1011,7 +1012,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def sub(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.sub_op, axis=axis)
@@ -1026,7 +1027,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def rsub(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.sub_op, axis=axis, reverse=True)
@@ -1038,7 +1039,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def mul(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.mul_op, axis=axis)
@@ -1053,7 +1054,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def rmul(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self.mul(other, axis=axis)
@@ -1065,7 +1066,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def truediv(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.div_op, axis=axis)
@@ -1080,7 +1081,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def rtruediv(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.div_op, axis=axis, reverse=True)
@@ -1095,7 +1096,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def floordiv(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.floordiv_op, axis=axis)
@@ -1107,7 +1108,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def rfloordiv(
         self,
-        other: float | int | bigframes.series.Series | DataFrame,
+        other: float | int | BF_Series | DataFrame,
         axis: str | int = "columns",
     ) -> DataFrame:
         return self._apply_binop(other, ops.floordiv_op, axis=axis, reverse=True)
@@ -1119,7 +1120,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         vendored_pandas_frame.DataFrame.__rfloordiv__
     )
 
-    def mod(self, other: int | bigframes.series.Series | DataFrame, axis: str | int = "columns") -> DataFrame:  # type: ignore
+    def mod(self, other: int | BF_Series | DataFrame, axis: str | int = "columns") -> DataFrame:  # type: ignore
         return self._apply_binop(other, ops.mod_op, axis=axis)
 
     def __mod__(self, other):
@@ -1127,7 +1128,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     __mod__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__mod__)
 
-    def rmod(self, other: int | bigframes.series.Series | DataFrame, axis: str | int = "columns") -> DataFrame:  # type: ignore
+    def rmod(self, other: int | BF_Series | DataFrame, axis: str | int = "columns") -> DataFrame:  # type: ignore
         return self._apply_binop(other, ops.mod_op, axis=axis, reverse=True)
 
     def __rmod__(self, other):
@@ -1136,7 +1137,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
     __rmod__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__rmod__)
 
     def pow(
-        self, other: int | bigframes.series.Series, axis: str | int = "columns"
+        self, other: int | BF_Series, axis: str | int = "columns"
     ) -> DataFrame:
         return self._apply_binop(other, ops.pow_op, axis=axis)
 
@@ -1146,7 +1147,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
     __pow__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__pow__)
 
     def rpow(
-        self, other: int | bigframes.series.Series, axis: str | int = "columns"
+        self, other: int | BF_Series, axis: str | int = "columns"
     ) -> DataFrame:
         return self._apply_binop(other, ops.pow_op, axis=axis, reverse=True)
 
@@ -1155,21 +1156,21 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     __rpow__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__rpow__)
 
-    def __and__(self, other: bool | int | bigframes.series.Series) -> DataFrame:
+    def __and__(self, other: bool | int | BF_Series) -> DataFrame:
         return self._apply_binop(other, ops.and_op)
 
     __and__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__and__)
 
     __rand__ = __and__
 
-    def __or__(self, other: bool | int | bigframes.series.Series) -> DataFrame:
+    def __or__(self, other: bool | int | BF_Series) -> DataFrame:
         return self._apply_binop(other, ops.or_op)
 
     __or__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__or__)
 
     __ror__ = __or__
 
-    def __xor__(self, other: bool | int | bigframes.series.Series) -> DataFrame:
+    def __xor__(self, other: bool | int | BF_Series) -> DataFrame:
         return self._apply_binop(other, ops.xor_op)
 
     __xor__.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.__xor__)
@@ -1184,15 +1185,15 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def align(
         self,
-        other: typing.Union[DataFrame, bigframes.series.Series],
+        other: typing.Union[DataFrame, BF_Series],
         join: str = "outer",
         axis: typing.Union[str, int, None] = None,
     ) -> typing.Tuple[
-        typing.Union[DataFrame, bigframes.series.Series],
-        typing.Union[DataFrame, bigframes.series.Series],
+        typing.Union[DataFrame, BF_Series],
+        typing.Union[DataFrame, BF_Series],
     ]:
         axis_n = utils.get_axis_number(axis) if axis else None
-        if axis_n == 1 and isinstance(other, bigframes.series.Series):
+        if axis_n == 1 and isinstance(other, BF_Series):
             raise NotImplementedError(
                 f"align with series and axis=1 not supported. {constants.FEEDBACK_LINK}"
             )
@@ -1209,22 +1210,22 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         if filter_func is not None:  # Will always take other if possible
 
             def update_func(
-                left: bigframes.series.Series, right: bigframes.series.Series
-            ) -> bigframes.series.Series:
+                left: BF_Series, right: BF_Series
+            ) -> BF_Series:
                 return left.mask(right.notna() & filter_func(left), right)
 
         elif overwrite:
 
             def update_func(
-                left: bigframes.series.Series, right: bigframes.series.Series
-            ) -> bigframes.series.Series:
+                left: BF_Series, right: BF_Series
+            ) -> BF_Series:
                 return left.mask(right.notna(), right)
 
         else:
 
             def update_func(
-                left: bigframes.series.Series, right: bigframes.series.Series
-            ) -> bigframes.series.Series:
+                left: BF_Series, right: BF_Series
+            ) -> BF_Series:
                 return left.mask(left.isna(), right)
 
         result = self.combine(other, update_func, how=join)
@@ -1235,7 +1236,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         self,
         other: DataFrame,
         func: typing.Callable[
-            [bigframes.series.Series, bigframes.series.Series], bigframes.series.Series
+            [BF_Series, BF_Series], BF_Series
         ],
         fill_value=None,
         overwrite: bool = True,
@@ -1265,7 +1266,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
                 )
             results.append(result)
 
-        if all([isinstance(val, bigframes.series.Series) for val in results]):
+        if all([isinstance(val, BF_Series) for val in results]):
             import bigframes.core.reshape.api as rs
 
             return rs.concat(results, axis=1)
@@ -1490,7 +1491,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def corrwith(
         self,
-        other: typing.Union[DataFrame, bigframes.series.Series],
+        other: typing.Union[DataFrame, BF_Series],
         *,
         numeric_only: bool = False,
     ):
@@ -1508,7 +1509,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         if isinstance(other, DataFrame):
             block, labels, expr_pairs = l_block._align_both_axes(r_block, how="inner")
         else:
-            assert isinstance(other, bigframes.series.Series)
+            assert isinstance(other, BF_Series)
             block, labels, expr_pairs = l_block._align_axis_0(r_block, how="inner")
 
         na_cols = l_block.column_labels.join(
@@ -1877,7 +1878,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         return DataFrame(self._block.with_index_labels(labels))
 
     @validations.requires_ordering()
-    def equals(self, other: typing.Union[bigframes.series.Series, DataFrame]) -> bool:
+    def equals(self, other: typing.Union[BF_Series, DataFrame]) -> bool:
         # Must be same object type, same column dtypes, and same label values
         if not isinstance(other, DataFrame):
             return False
@@ -1898,7 +1899,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         k: str,
         v: SingleItemValue,
     ) -> DataFrame:
-        if isinstance(v, bigframes.series.Series):
+        if isinstance(v, BF_Series):
             return self._assign_series_join_on_index(k, v)
         elif isinstance(v, bigframes.dataframe.DataFrame):
             v_df_col_count = len(v._block.value_columns)
@@ -1973,7 +1974,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         return DataFrame(block)
 
     def _assign_series_join_on_index(
-        self, label: str, series: bigframes.series.Series
+        self, label: str, series: BF_Series
     ) -> DataFrame:
         block, (get_column_left, get_column_right) = self._block.join(
             series._block, how="left"
@@ -2045,7 +2046,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         kind: str = "quicksort",
         na_position: typing.Literal["first", "last"] = "last",
     ) -> DataFrame:
-        if isinstance(by, (bigframes.series.Series, indexes.Index, DataFrame)):
+        if isinstance(by, (BF_Series, indexes.Index, DataFrame)):
             raise KeyError(
                 f"Invalid key type: {type(by).__name__}. Please provide valid column name(s)."
             )
@@ -2105,7 +2106,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             ascending=ascending,
             dropna=dropna,
         )
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def add_prefix(self, prefix: str, axis: int | str | None = None) -> DataFrame:
         axis = 1 if axis is None else axis
@@ -2356,7 +2357,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         column_ids = self._block.value_columns
         column_labels = self._block.column_labels
         for col_id, col_label in zip(column_ids, column_labels):
-            yield col_label, bigframes.series.Series(self._block.select_column(col_id))
+            yield col_label, BF_Series(self._block.select_column(col_id))
 
     def iterrows(self) -> Iterable[tuple[typing.Any, pandas.Series]]:
         for df in self.to_pandas_batches():
@@ -2371,7 +2372,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
                 yield item
 
     def where(self, cond, other=None):
-        if isinstance(other, bigframes.series.Series):
+        if isinstance(other, BF_Series):
             raise ValueError("Seires is not a supported replacement type!")
 
         if self.columns.nlevels > 1 or self.index.nlevels > 1:
@@ -2390,7 +2391,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         labels = aligned_block.column_labels[:self_len]
         self_col = {x: ex.deref(y) for x, y in zip(labels, ids)}
 
-        if isinstance(cond, bigframes.series.Series) and cond.name in self_col:
+        if isinstance(cond, BF_Series) and cond.name in self_col:
             # This is when 'cond' is a valid series.
             y = aligned_block.value_columns[self_len]
             cond_col = {x: ex.deref(y) for x in self_col.keys()}
@@ -2417,7 +2418,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             result_block, result_id = aligned_block.project_expr(
                 ops.where_op.as_expr(self_id, cond_id, other_id)
             )
-            series = bigframes.series.Series(
+            series = BF_Series(
                 result_block.select_column(result_id).with_column_labels([x])
             )
             result_series[x] = series
@@ -2488,47 +2489,47 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         *,
         axis: typing.Union[str, int] = 0,
         bool_only: bool = False,
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not bool_only:
             frame = self._raise_on_non_boolean("any")
         else:
             frame = self._drop_non_bool()
         block = frame._block.aggregate_all_and_stack(agg_ops.any_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def all(
         self, axis: typing.Union[str, int] = 0, *, bool_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not bool_only:
             frame = self._raise_on_non_boolean("all")
         else:
             frame = self._drop_non_bool()
         block = frame._block.aggregate_all_and_stack(agg_ops.all_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def sum(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("sum")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.sum_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def mean(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("mean")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.mean_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def median(
         self, *, numeric_only: bool = False, exact: bool = True
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("median")
         else:
@@ -2539,7 +2540,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             return result
         else:
             block = frame._block.aggregate_all_and_stack(agg_ops.median_op)
-            return bigframes.series.Series(block)
+            return BF_Series(block)
 
     def quantile(
         self, q: Union[float, Sequence[float]] = 0.5, *, numeric_only: bool = False
@@ -2559,78 +2560,78 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             result = result.with_column_labels(result.column_labels.droplevel(-1))
             result, index_col = result.create_constant(q, None)
             result = result.set_index([index_col])
-            return bigframes.series.Series(
+            return BF_Series(
                 result.transpose(original_row_index=pandas.Index([q]))
             )
 
     def std(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("std")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.std_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def var(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("var")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.var_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def min(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("min")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.min_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def max(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("max")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.max_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def prod(
         self, axis: typing.Union[str, int] = 0, *, numeric_only: bool = False
-    ) -> bigframes.series.Series:
+    ) -> BF_Series:
         if not numeric_only:
             frame = self._raise_on_non_numeric("prod")
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.product_op, axis=axis)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     product = prod
     product.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.prod)
 
-    def count(self, *, numeric_only: bool = False) -> bigframes.series.Series:
+    def count(self, *, numeric_only: bool = False) -> BF_Series:
         if not numeric_only:
             frame = self
         else:
             frame = self._drop_non_numeric()
         block = frame._block.aggregate_all_and_stack(agg_ops.count_op)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
-    def nunique(self) -> bigframes.series.Series:
+    def nunique(self) -> BF_Series:
         block = self._block.aggregate_all_and_stack(agg_ops.nunique_op)
-        return bigframes.series.Series(block)
+        return BF_Series(block)
 
     def agg(
         self, func: str | typing.Sequence[str]
-    ) -> DataFrame | bigframes.series.Series:
+    ) -> DataFrame | BF_Series:
         if utils.is_list_like(func):
             aggregations = [agg_ops.lookup_agg_func(f) for f in func]
 
@@ -2646,7 +2647,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
                 )
             )
         else:
-            return bigframes.series.Series(
+            return BF_Series(
                 self._block.aggregate_all_and_stack(
                     agg_ops.lookup_agg_func(typing.cast(str, func))
                 )
@@ -2657,13 +2658,13 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     @validations.requires_index
     @validations.requires_ordering()
-    def idxmin(self) -> bigframes.series.Series:
-        return bigframes.series.Series(block_ops.idxmin(self._block))
+    def idxmin(self) -> BF_Series:
+        return BF_Series(block_ops.idxmin(self._block))
 
     @validations.requires_index
     @validations.requires_ordering()
-    def idxmax(self) -> bigframes.series.Series:
-        return bigframes.series.Series(block_ops.idxmax(self._block))
+    def idxmax(self) -> BF_Series:
+        return BF_Series(block_ops.idxmax(self._block))
 
     @validations.requires_ordering()
     def melt(
@@ -2798,7 +2799,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         else:
             frame = self._drop_non_numeric()
         result_block = block_ops.skew(frame._block, frame._block.value_columns)
-        return bigframes.series.Series(result_block)
+        return BF_Series(result_block)
 
     def kurt(self, *, numeric_only: bool = False):
         if not numeric_only:
@@ -2806,7 +2807,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         else:
             frame = self._drop_non_numeric()
         result_block = block_ops.kurt(frame._block, frame._block.value_columns)
-        return bigframes.series.Series(result_block)
+        return BF_Series(result_block)
 
     kurtosis = kurt
     kurtosis.__doc__ = inspect.getdoc(vendored_pandas_frame.DataFrame.kurt)
@@ -2901,7 +2902,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         keys = index + columns
         agged = self.groupby(keys, dropna=True)[values].agg(aggfunc)
 
-        if isinstance(agged, bigframes.series.Series):
+        if isinstance(agged, BF_Series):
             agged = agged.to_frame()
 
         agged = agged.dropna(how="all")
@@ -2932,7 +2933,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def _stack_mono(self):
         result_block = self._block.stack()
-        return bigframes.series.Series(result_block)
+        return BF_Series(result_block)
 
     def _stack_multi(self, level: LevelsType = -1):
         n_levels = self.columns.nlevels
@@ -2971,7 +2972,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         # Special case, unstack with mono-index transpose into a series
         if self.index.nlevels == 1:
             block = block.stack(how="right", levels=self.columns.nlevels)
-            return bigframes.series.Series(block)
+            return BF_Series(block)
 
         # Pivot by index levels
         unstack_ids = self._resolve_levels(level)
@@ -3109,12 +3110,12 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     def join(
         self,
-        other: Union[DataFrame, bigframes.series.Series],
+        other: Union[DataFrame, BF_Series],
         *,
         on: Optional[str] = None,
         how: str = "left",
     ) -> DataFrame:
-        if isinstance(other, bigframes.series.Series):
+        if isinstance(other, BF_Series):
             other = other.to_frame()
 
         left, right = self, other
@@ -3205,8 +3206,8 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         self,
         by: typing.Union[
             blocks.Label,
-            bigframes.series.Series,
-            typing.Sequence[typing.Union[blocks.Label, bigframes.series.Series]],
+            BF_Series,
+            typing.Sequence[typing.Union[blocks.Label, BF_Series]],
             None,
         ] = None,
         *,
@@ -3241,21 +3242,21 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         self,
         by: typing.Union[
             blocks.Label,
-            bigframes.series.Series,
-            typing.Sequence[typing.Union[blocks.Label, bigframes.series.Series]],
+            BF_Series,
+            typing.Sequence[typing.Union[blocks.Label, BF_Series]],
         ],
         as_index: bool = True,
         dropna: bool = True,
     ):
-        if not isinstance(by, bigframes.series.Series) and utils.is_list_like(by):
+        if not isinstance(by, BF_Series) and utils.is_list_like(by):
             by = list(by)
         else:
-            by = [typing.cast(typing.Union[blocks.Label, bigframes.series.Series], by)]
+            by = [typing.cast(typing.Union[blocks.Label, BF_Series], by)]
 
         block = self._block
         col_ids: typing.Sequence[str] = []
         for key in by:
-            if isinstance(key, bigframes.series.Series):
+            if isinstance(key, BF_Series):
                 block, (
                     get_column_left,
                     get_column_right,
@@ -4060,7 +4061,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
                 # Serialize the rows as json values
                 block = self._get_block()
-                rows_as_json_series = bigframes.series.Series(
+                rows_as_json_series = BF_Series(
                     block._get_rows_as_json_values()
                 )
 
@@ -4125,7 +4126,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
         if all(
             [
-                isinstance(val, bigframes.series.Series) or utils.is_list_like(val)
+                isinstance(val, BF_Series) or utils.is_list_like(val)
                 for val in results.values()
             ]
         ):
@@ -4153,7 +4154,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
         block = block_ops.drop_duplicates(self._block, column_ids, keep)
         return DataFrame(block)
 
-    def duplicated(self, subset=None, keep: str = "first") -> bigframes.series.Series:
+    def duplicated(self, subset=None, keep: str = "first") -> BF_Series:
         if keep is not False:
             validations.enforce_ordered(self, "duplicated(keep != False)")
         if subset is None:
@@ -4163,7 +4164,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
                 id for label in subset for id in self._block.label_to_col_id[label]
             ]
         block, indicator = block_ops.indicate_duplicates(self._block, column_ids, keep)
-        return bigframes.series.Series(
+        return BF_Series(
             block.select_column(
                 indicator,
             )
@@ -4248,7 +4249,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
 
     @validations.requires_ordering()
     def dot(self, other: _DataFrameOrSeries) -> _DataFrameOrSeries:
-        if not isinstance(other, (DataFrame, bigframes.series.Series)):
+        if not isinstance(other, (DataFrame, BF_Series)):
             raise NotImplementedError(
                 f"Only DataFrame or Series operand is supported. {constants.FEEDBACK_LINK}"
             )
@@ -4323,7 +4324,7 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             )
         result = result[other_frame.columns]
 
-        if isinstance(other, bigframes.series.Series):
+        if isinstance(other, BF_Series):
             # There should be exactly one column in the result
             result = result[result.columns[0]].rename()
 
