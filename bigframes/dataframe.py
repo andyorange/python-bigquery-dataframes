@@ -82,9 +82,7 @@ import bigframes.session._io.bigquery
 
 if typing.TYPE_CHECKING:
     from _typeshed import SupportsRichComparison
-
     import bigframes.session
-
     SingleItemValue = Union[BF_Series, int, float, Callable]
 
 LevelType = typing.Hashable
@@ -100,7 +98,7 @@ ERROR_IO_REQUIRES_WILDCARD = (
 #TODO (abeschorner): Refactor. Separate sql related from Pandas related stuff into a different class and compose. No mult. inherit.
 #TODO(abeschorner): Separate memory usage and representation (html, string), perhaps also exports (needs only blocks mostly, but no DataFrame functionality)
 # Inherits from pandas DataFrame so that we can use the same docstrings.
-@log_adapter.class_logger
+#@log_adapter.class_logger
 class DataFrame(vendored_pandas_frame.DataFrame):
     __doc__ = vendored_pandas_frame.DataFrame.__doc__
     # internal flag to disable cache at all
@@ -115,11 +113,8 @@ class DataFrame(vendored_pandas_frame.DataFrame):
             bigframes.dtypes.DtypeString | bigframes.dtypes.Dtype
         ] = None,
         copy: typing.Optional[bool] = None,
-        *,
         session: typing.Optional[bigframes.session.Session] = None,
     ):
-        #global bigframes  #TODO (abeschorner): This is a complete NoGo, having ALL of bigframes in the DataFrame class. And it calls for circular dependencies.
-
         self._query_job: Optional[bigquery.QueryJob] = None
 
         if copy is not None and not copy:

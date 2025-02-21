@@ -87,7 +87,7 @@ class Index(vendored_pandas_index.Index):
         else:
             pd_index = pandas.Index(data=data, dtype=dtype, name=name)
             pd_df = pandas.DataFrame(index=pd_index)
-            block = df.DataFrame(pd_df, session=session)._block
+            block = df.DataFrame(data=pd_df, session=session)._block
 
         # TODO: Support more index subtypes
         from bigframes.core.indexes.multi import MultiIndex
