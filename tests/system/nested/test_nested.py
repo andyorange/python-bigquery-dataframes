@@ -20,18 +20,8 @@
 #from typing import List
 
 import bigframes.pandas as bfpd
-import bigframes.core as core
-from bigframes.core.schema_tracking import set_project
 from bigframes.dataframe import DataFrame #nested_data_context_manager
-from bigframes.nesteddataframe import NestedDataError, NestedDataFrame
-#from bigframes.core.nodes import NestedDataContextManager
-#from bigframes.core import Session
-
-
-# start context manager (cm) in pandas/__init__.py
-# use dataframe object, there is dtypes info on it.
-# cm constructur get schema by: dataframe._cashed [replaces block by cached version, one to one bq table to dataframe]
-#   and get block with _block.expr
+from bigframes.nesteddataframe import NestedDataFrame, set_project
 
 # def table_schema(table_name_full: str) -> List[SchemaField]:
 #     project = table_name_full.split(".")[0]
@@ -143,6 +133,7 @@ if __name__ == "__main__":
     dfn1 = NestedDataFrame(data=df1)
     dfn2 = NestedDataFrame(data=df2)
     dfn_merged = dfn1.merge(right=dfn2, on=["age"], how="inner")
+    print(dfn_merged.head())
 
     # with nested_data_context_manager as ncm:
     #     #df = bfpd.read_gbq(f"SELECT * FROM {table} limit 10")

@@ -2,7 +2,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from collections import deque
 from typing import final, TYPE_CHECKING, Tuple
-from typing_extensions import Self   #TODO (abeschorner): deprecated, please move away from python 3.9. Add Self import to typing
 from networkx import DiGraph, topological_sort, compose as nx_compose
 from pyarrow import DataType as pa_datatype
 
@@ -17,6 +16,13 @@ import bigframes.session
 
 if TYPE_CHECKING:
     from bigframes.dataframe import DataFrame
+
+
+def set_project(project: str | None = None, location: str | None = None,):
+    config_options.bigquery.project = project if project is not None else config_options.bigquery.project
+    config_options.bigquery.location = location if location is not None else config_options.bigquery.location
+    return
+
 
 class NestedDataError(Exception):
     def __init__(self, message: str, 
